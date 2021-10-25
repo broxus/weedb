@@ -131,6 +131,7 @@ impl<T> Tree<T>
         Ok(())
     }
 
+    /// returns true, if key definitely exists
     pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
         let cf = self.get_cf()?;
         Ok(self
@@ -140,6 +141,7 @@ impl<T> Tree<T>
     }
 
     /// returns true, if no key exists. And false, if it may exists.
+    /// Uses bloom filter inside
     pub fn has_no_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
         let cf = self.get_cf()?;
         Ok(!self
@@ -151,13 +153,15 @@ impl<T> Tree<T>
         &self.db
     }
 
-    /// Note. get_cf Usually took p999 511ns,
-    /// So we are not storing it in any way
+    // Note. get_cf Usually took p999 511ns,
+    // So we are not storing it in any way
     #[inline]
     pub fn get_cf(&self) -> Result<Arc<BoundColumnFamily>> {
         self.db.cf_handle(T::NAME).context("No cf")
     }
 
+    /// Returns size of all keys and values sizes.
+    /// Blocking operation
     pub fn size(&self) -> Result<usize> {
         let mut tot = 0;
         self.iterator(rocksdb::IteratorMode::Start)?

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rocksdb::{
-    BoundColumnFamily, DB, DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode,
-    Options, ReadOptions, WriteOptions,
+    BoundColumnFamily, DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode, Options,
+    ReadOptions, WriteOptions, DB,
 };
 
 pub trait Column {
@@ -31,8 +31,8 @@ pub struct DbBuilder {
 
 impl DbBuilder {
     pub fn new<P>(path: P) -> Self
-        where
-            P: AsRef<Path>,
+    where
+        P: AsRef<Path>,
     {
         Self {
             path: path.as_ref().into(),
@@ -42,16 +42,16 @@ impl DbBuilder {
     }
 
     pub fn options<F>(mut self, mut f: F) -> Self
-        where
-            F: FnMut(&mut Options),
+    where
+        F: FnMut(&mut Options),
     {
         f(&mut self.options);
         self
     }
 
     pub fn column<T>(mut self) -> Self
-        where
-            T: Column,
+    where
+        T: Column,
     {
         let mut opts = Default::default();
         T::options(&mut opts);
@@ -77,8 +77,8 @@ pub struct Tree<T> {
 }
 
 impl<T> Tree<T>
-    where
-        T: Column,
+where
+    T: Column,
 {
     pub fn new(db: &Arc<DB>) -> Result<Self> {
         // Check that tree exists
@@ -100,6 +100,16 @@ impl<T> Tree<T>
     }
 
     #[inline]
+    pub fn read_config(&self) -> &ReadOptions {
+        &self.read_config
+    }
+
+    #[inline]
+    pub fn write_config(&self) -> &WriteOptions {
+        &self.write_config
+    }
+
+    #[inline]
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<DBPinnableSlice>> {
         let cf = self.get_cf()?;
         Ok(self.db.get_pinned_cf_opt(&cf, key, &self.read_config)?)
@@ -107,9 +117,9 @@ impl<T> Tree<T>
 
     #[inline]
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<()>
-        where
-            K: AsRef<[u8]>,
-            V: AsRef<[u8]>,
+    where
+        K: AsRef<[u8]>,
+        V: AsRef<[u8]>,
     {
         let cf = self.get_cf()?;
         Ok(self.db.put_cf_opt(&cf, key, value, &self.write_config)?)
@@ -132,6 +142,7 @@ impl<T> Tree<T>
     }
 
     /// returns true, if key definitely exists
+    #[inline]
     pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
         let cf = self.get_cf()?;
         Ok(self
@@ -140,21 +151,13 @@ impl<T> Tree<T>
             .is_some())
     }
 
-    /// returns true, if no key exists. And false, if it may exists.
-    /// Uses bloom filter inside
-    pub fn has_no_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
-        let cf = self.get_cf()?;
-        Ok(!self
-            .db
-            .key_may_exist_cf_opt(&cf, key, &self.read_config))
-    }
-
+    #[inline]
     pub fn raw_db_handle(&self) -> &Arc<DB> {
         &self.db
     }
 
-    // Note. get_cf Usually took p999 511ns,
-    // So we are not storing it in any way
+    /// Note. get_cf Usually took p999 511ns,
+    /// So we are not storing it in any way
     #[inline]
     pub fn get_cf(&self) -> Result<Arc<BoundColumnFamily>> {
         self.db.cf_handle(T::NAME).context("No cf")
@@ -179,6 +182,14 @@ impl<T> Tree<T>
         T::read_options(&mut read_config);
 
         Ok(self.db.iterator_cf_opt(&cf, read_config, mode))
+    }
+
+    pub fn prefix_iterator<P>(&'_ self, prefix: P) -> Result<DBIterator>
+    where
+        P: AsRef<[u8]>,
+    {
+        let cf = self.get_cf()?;
+        Ok(self.db.prefix_iterator_cf(&cf, prefix))
     }
 
     pub fn raw_iterator(&'_ self) -> Result<DBRawIterator> {

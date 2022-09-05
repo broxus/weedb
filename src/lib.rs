@@ -168,6 +168,7 @@ where
     pub fn size(&self) -> Result<usize> {
         let mut tot = 0;
         self.iterator(rocksdb::IteratorMode::Start)?
+            .flat_map(|x| x.ok())
             .for_each(|(k, v)| {
                 tot += k.len();
                 tot += v.len();

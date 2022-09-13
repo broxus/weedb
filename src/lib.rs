@@ -3,15 +3,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use rocksdb::{
-    BoundColumnFamily, DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode, Options,
+    BoundColumnFamily, Cache, DBIterator, DBPinnableSlice, DBRawIterator, IteratorMode, Options,
     ReadOptions, WriteOptions, DB,
 };
 
 pub trait Column {
     const NAME: &'static str;
 
-    fn options(opts: &mut Options) {
+    fn options(opts: &mut Options, caches: &DbCaches) {
         let _unused = opts;
+        let _unused = caches;
     }
 
     fn write_options(opts: &mut WriteOptions) {
@@ -23,29 +24,51 @@ pub trait Column {
     }
 }
 
-pub struct DbBuilder {
+pub struct DbCaches {
+    pub block_cache: Cache,
+    pub compressed_block_cache: Cache,
+}
+
+impl DbCaches {
+    pub fn with_capacity(capacity: usize) -> Result<Self, rocksdb::Error> {
+        const MIN_CAPACITY: usize = 64 * 1024 * 1024;
+
+        let block_cache_capacity = std::cmp::min(capacity * 2 / 3, MIN_CAPACITY);
+        let compressed_block_cache_capacity =
+            std::cmp::min(capacity.saturating_sub(block_cache_capacity), MIN_CAPACITY);
+
+        Ok(Self {
+            block_cache: Cache::new_lru_cache(block_cache_capacity)?,
+            compressed_block_cache: Cache::new_lru_cache(compressed_block_cache_capacity)?,
+        })
+    }
+}
+
+pub struct DbBuilder<'a> {
     path: PathBuf,
     options: Options,
+    caches: &'a DbCaches,
     descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
 }
 
-impl DbBuilder {
-    pub fn new<P>(path: P) -> Self
+impl<'a> DbBuilder<'a> {
+    pub fn new<P>(path: P, caches: &'a DbCaches) -> Self
     where
         P: AsRef<Path>,
     {
         Self {
             path: path.as_ref().into(),
             options: Default::default(),
+            caches,
             descriptors: Default::default(),
         }
     }
 
     pub fn options<F>(mut self, mut f: F) -> Self
     where
-        F: FnMut(&mut Options),
+        F: FnMut(&mut Options, &DbCaches),
     {
-        f(&mut self.options);
+        f(&mut self.options, self.caches);
         self
     }
 
@@ -54,7 +77,7 @@ impl DbBuilder {
         T: Column,
     {
         let mut opts = Default::default();
-        T::options(&mut opts);
+        T::options(&mut opts, self.caches);
         self.descriptors
             .push(rocksdb::ColumnFamilyDescriptor::new(T::NAME, opts));
         self
@@ -109,9 +132,8 @@ where
         &self.write_config
     }
 
-    #[inline]
     pub fn get<K: AsRef<[u8]>>(&self, key: K) -> Result<Option<DBPinnableSlice>> {
-        let cf = self.get_cf()?;
+        let cf = self.get_cf();
         Ok(self.db.get_pinned_cf_opt(&cf, key, &self.read_config)?)
     }
 
@@ -121,84 +143,66 @@ where
         K: AsRef<[u8]>,
         V: AsRef<[u8]>,
     {
-        let cf = self.get_cf()?;
+        let cf = self.get_cf();
         Ok(self.db.put_cf_opt(&cf, key, value, &self.write_config)?)
     }
 
-    #[inline]
+    #[allow(dead_code)]
     pub fn remove<K: AsRef<[u8]>>(&self, key: K) -> Result<()> {
-        let cf = self.get_cf()?;
+        let cf = self.get_cf();
         Ok(self.db.delete_cf_opt(&cf, key, &self.write_config)?)
     }
 
-    pub fn clear(&self) -> Result<()> {
-        self.db.drop_cf(T::NAME)?;
-
-        let mut options = Default::default();
-        T::options(&mut options);
-
-        self.db.create_cf(T::NAME, &options)?;
-        Ok(())
-    }
-
-    /// returns true, if key definitely exists
-    #[inline]
+    #[allow(dead_code)]
     pub fn contains_key<K: AsRef<[u8]>>(&self, key: K) -> Result<bool> {
-        let cf = self.get_cf()?;
+        let cf = self.get_cf();
         Ok(self
             .db
             .get_pinned_cf_opt(&cf, key, &self.read_config)?
             .is_some())
     }
 
-    #[inline]
     pub fn raw_db_handle(&self) -> &Arc<DB> {
         &self.db
     }
 
     /// Note. get_cf Usually took p999 511ns,
     /// So we are not storing it in any way
-    #[inline]
-    pub fn get_cf(&self) -> Result<Arc<BoundColumnFamily>> {
-        self.db.cf_handle(T::NAME).context("No cf")
+    pub fn get_cf(&self) -> Arc<BoundColumnFamily> {
+        self.db.cf_handle(T::NAME).expect("Shouldn't fail")
     }
 
-    /// Returns size of all keys and values sizes.
-    /// Blocking operation
-    pub fn size(&self) -> Result<usize> {
-        let mut tot = 0;
-        self.iterator(rocksdb::IteratorMode::Start)?
-            .flat_map(|x| x.ok())
-            .for_each(|(k, v)| {
-                tot += k.len();
-                tot += v.len();
-            });
-        Ok(tot)
-    }
-
-    pub fn iterator(&'_ self, mode: IteratorMode) -> Result<DBIterator> {
-        let cf = self.get_cf()?;
+    pub fn iterator(&'_ self, mode: IteratorMode) -> DBIterator {
+        let cf = self.get_cf();
 
         let mut read_config = Default::default();
         T::read_options(&mut read_config);
 
-        Ok(self.db.iterator_cf_opt(&cf, read_config, mode))
+        self.db.iterator_cf_opt(&cf, read_config, mode)
     }
 
-    pub fn prefix_iterator<P>(&'_ self, prefix: P) -> Result<DBIterator>
+    pub fn prefix_iterator<P>(&'_ self, prefix: P) -> DBRawIterator
     where
         P: AsRef<[u8]>,
     {
-        let cf = self.get_cf()?;
-        Ok(self.db.prefix_iterator_cf(&cf, prefix))
+        let cf = self.get_cf();
+
+        let mut read_config = Default::default();
+        T::read_options(&mut read_config);
+        read_config.set_prefix_same_as_start(true);
+
+        let mut iter = self.db.raw_iterator_cf_opt(&cf, read_config);
+        iter.seek(prefix.as_ref());
+
+        iter
     }
 
-    pub fn raw_iterator(&'_ self) -> Result<DBRawIterator> {
-        let cf = self.get_cf()?;
+    pub fn raw_iterator(&'_ self) -> DBRawIterator {
+        let cf = self.get_cf();
 
         let mut read_config = Default::default();
         T::read_options(&mut read_config);
 
-        Ok(self.db.raw_iterator_cf_opt(&cf, read_config))
+        self.db.raw_iterator_cf_opt(&cf, read_config)
     }
 }

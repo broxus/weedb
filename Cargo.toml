@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.44"
-rocksdb = { version = '0.19.0', features = ["jemalloc", "multi-threaded-cf"] }
+rocksdb = { version = "0.19", features = ["multi-threaded-cf", "zstd", "lz4", "jemalloc"], default-features = false }

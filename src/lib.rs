@@ -30,12 +30,14 @@ pub struct DbCaches {
 }
 
 impl DbCaches {
-    pub fn with_capacity(capacity: usize) -> Result<Self, rocksdb::Error> {
-        const MIN_CAPACITY: usize = 64 * 1024 * 1024;
+    pub const MIN_CAPACITY: usize = 64 * 1024 * 1024;
 
-        let block_cache_capacity = std::cmp::min(capacity * 2 / 3, MIN_CAPACITY);
-        let compressed_block_cache_capacity =
-            std::cmp::min(capacity.saturating_sub(block_cache_capacity), MIN_CAPACITY);
+    pub fn with_capacity(capacity: usize) -> Result<Self, rocksdb::Error> {
+        let block_cache_capacity = std::cmp::min(capacity * 2 / 3, DbCaches::MIN_CAPACITY);
+        let compressed_block_cache_capacity = std::cmp::min(
+            capacity.saturating_sub(block_cache_capacity),
+            DbCaches::MIN_CAPACITY,
+        );
 
         Ok(Self {
             block_cache: Cache::new_lru_cache(block_cache_capacity)?,

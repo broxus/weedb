@@ -40,8 +40,8 @@ impl DbCaches {
         );
 
         Ok(Self {
-            block_cache: Cache::new_lru_cache(block_cache_capacity)?,
-            compressed_block_cache: Cache::new_lru_cache(compressed_block_cache_capacity)?,
+            block_cache: Cache::new_lru_cache(block_cache_capacity),
+            compressed_block_cache: Cache::new_lru_cache(compressed_block_cache_capacity),
         })
     }
 }

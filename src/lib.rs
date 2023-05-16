@@ -10,7 +10,6 @@ pub use rocksdb;
 pub struct WeeDb {
     raw: Arc<rocksdb::DB>,
     caches: Caches,
-    cancel_all_background_work_on_drop: bool,
 }
 
 impl WeeDb {
@@ -51,21 +50,6 @@ impl WeeDb {
     #[inline]
     pub fn caches(&self) -> &Caches {
         &self.caches
-    }
-
-    /// Whether to wait for the background work to finish during the WeeDb instance drop.
-    ///
-    /// Default: `true`
-    pub fn cancel_all_background_work_on_drop(&mut self, cancel: bool) {
-        self.cancel_all_background_work_on_drop = cancel;
-    }
-}
-
-impl Drop for WeeDb {
-    fn drop(&mut self) {
-        if self.cancel_all_background_work_on_drop {
-            self.raw.cancel_all_background_work(true);
-        }
     }
 }
 
@@ -125,7 +109,6 @@ impl Builder {
                 self.descriptors,
             )?),
             caches: self.caches,
-            cancel_all_background_work_on_drop: true,
         })
     }
 }

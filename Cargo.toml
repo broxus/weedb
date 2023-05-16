@@ -1,8 +1,23 @@
 [package]
-name = "rocksdb-builder"
+name = "weedb"
 version = "0.1.0"
 edition = "2021"
+description = "A thin wrapper around RocksDB."
+authors = ["Rexagon", "0xdeafbeef"]
+repository = "https://github.com/broxus/weedb"
+rust-version = "1.65"
+include = ["src/**/*.rs", "benches/**/*.rs", "LICENSE-*", "README.md"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-anyhow = "1.0.44"
-rocksdb = { version = "0.21.0", features = ["multi-threaded-cf", "zstd", "lz4", "jemalloc"], default-features = false }
+thiserror = "1.0"
+tracing = "0.1"
+
+librocksdb-sys = "0.11.0"
+rocksdb = { version = "0.21.0", features = ["multi-threaded-cf"], default-features = false }
+
+[features]
+default = ["zstd", "lz4", "jemalloc"]
+zstd = ["rocksdb/zstd"]
+lz4 = ["rocksdb/lz4"]
+jemalloc = ["rocksdb/jemalloc"]

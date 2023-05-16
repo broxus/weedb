@@ -8,10 +8,9 @@ pub use rocksdb;
 /// A thin wrapper around RocksDB.
 #[derive(Clone)]
 pub struct WeeDb {
-    /// RocksDB instance.
-    pub raw: Arc<rocksdb::DB>,
-    /// A group of caches used by the DB.
-    pub caches: Caches,
+    raw: Arc<rocksdb::DB>,
+    caches: Caches,
+    cancel_all_background_work_on_drop: bool,
 }
 
 impl WeeDb {
@@ -40,6 +39,33 @@ impl WeeDb {
             block_cache_usage,
             block_cache_pined_usage,
         })
+    }
+
+    /// Returns an underlying RocksDB instance.
+    #[inline]
+    pub fn raw(&self) -> &Arc<rocksdb::DB> {
+        &self.raw
+    }
+
+    /// Returns an underlying caches group.
+    #[inline]
+    pub fn caches(&self) -> &Caches {
+        &self.caches
+    }
+
+    /// Whether to wait for the background work to finish during the WeeDb instance drop.
+    ///
+    /// Default: `true`
+    pub fn cancel_all_background_work_on_drop(&mut self, cancel: bool) {
+        self.cancel_all_background_work_on_drop = cancel;
+    }
+}
+
+impl Drop for WeeDb {
+    fn drop(&mut self) {
+        if self.cancel_all_background_work_on_drop {
+            self.raw.cancel_all_background_work(true);
+        }
     }
 }
 
@@ -99,6 +125,7 @@ impl Builder {
                 self.descriptors,
             )?),
             caches: self.caches,
+            cancel_all_background_work_on_drop: true,
         })
     }
 }
@@ -156,14 +183,20 @@ pub struct Caches {
     pub block_cache: rocksdb::Cache,
 }
 
+impl Default for Caches {
+    fn default() -> Self {
+        Self::with_capacity(Self::MIN_CAPACITY)
+    }
+}
+
 impl Caches {
+    const MIN_CAPACITY: usize = 64 * 1024 * 1024; // 64 MB
+
     /// Creates a new instance with the specified capacity (in bytes).
     ///
     /// NOTE: if the specified capacity is too low it will be clamped to 64 MB.
     pub fn with_capacity(capacity: usize) -> Self {
-        const MIN_CAPACITY: usize = 64 * 1024 * 1024; // 64 MB
-
-        let block_cache_capacity = std::cmp::max(capacity, MIN_CAPACITY);
+        let block_cache_capacity = std::cmp::max(capacity, Self::MIN_CAPACITY);
 
         Self {
             block_cache: rocksdb::Cache::new_lru_cache(block_cache_capacity),
@@ -412,29 +445,39 @@ unsafe impl Send for CfHandle {}
 unsafe impl Sync for CfHandle {}
 
 /// Migrations collection up to the target version.
-pub struct Migrations {
+pub struct Migrations<P> {
     target_version: Semver,
     migrations: HashMap<Semver, Migration>,
+    version_provider: P,
 }
 
-impl Migrations {
-    /// Creates a migrations collection up to the specified version.
+impl Migrations<DefaultVersionProvider> {
+    /// Creates a migrations collection up to the specified version
+    /// with the default version provider.
     pub fn with_target_version(target_version: Semver) -> Self {
         Self {
             target_version,
             migrations: Default::default(),
+            version_provider: DefaultVersionProvider,
+        }
+    }
+}
+
+impl<P: VersionProvider> Migrations<P> {
+    /// Creates a migrations collection up to the specified version
+    /// with the specified version provider.
+    pub fn with_target_version_and_provider(target_version: Semver, version_provider: P) -> Self {
+        Self {
+            target_version,
+            migrations: Default::default(),
+            version_provider,
         }
     }
 
     /// Registers a new migration.
-    pub fn register<F>(
-        &mut self,
-        from: Semver,
-        to: Semver,
-        migration: F,
-    ) -> Result<(), MigrationError>
+    pub fn register<F>(&mut self, from: Semver, to: Semver, migration: F) -> Result<(), Error>
     where
-        F: Fn(&WeeDb) -> Result<(), MigrationError> + 'static,
+        F: Fn(&WeeDb) -> Result<(), Error> + 'static,
     {
         use std::collections::hash_map;
 
@@ -446,30 +489,27 @@ impl Migrations {
                 }));
                 Ok(())
             }
-            hash_map::Entry::Occupied(entry) => {
-                Err(MigrationError::DuplicateMigration(*entry.key()))
-            }
+            hash_map::Entry::Occupied(entry) => Err(Error::DuplicateMigration(*entry.key())),
         }
     }
 }
 
 impl WeeDb {
-    pub fn apply(&self, migrations: Migrations) -> Result<(), MigrationError> {
-        const DB_VERSION_KEY: &str = "db_version";
-
-        if self.raw.get(DB_VERSION_KEY)?.is_none() {
+    /// Applies the provided migrations set until the target version.
+    pub fn apply<P: VersionProvider>(&self, migrations: Migrations<P>) -> Result<(), Error> {
+        if migrations.version_provider.get_version(self)?.is_none() {
             tracing::info!("starting with empty db");
-            self.raw.put(DB_VERSION_KEY, migrations.target_version)?;
-            return Ok(());
+
+            return migrations
+                .version_provider
+                .set_version(self, migrations.target_version);
         }
 
         loop {
-            let version: [u8; 3] = self
-                .raw
-                .get(DB_VERSION_KEY)?
-                .ok_or(MigrationError::VersionNotFound)?
-                .try_into()
-                .map_err(|_| MigrationError::InvalidDbVersion)?;
+            let version: Semver = migrations
+                .version_provider
+                .get_version(self)?
+                .ok_or(Error::VersionNotFound)?;
 
             match version.cmp(&migrations.target_version) {
                 std::cmp::Ordering::Less => {}
@@ -478,7 +518,7 @@ impl WeeDb {
                     break Ok(());
                 }
                 std::cmp::Ordering::Greater => {
-                    break Err(MigrationError::IncompatibleDbVersion {
+                    break Err(Error::IncompatibleDbVersion {
                         version,
                         expected: migrations.target_version,
                     })
@@ -488,10 +528,12 @@ impl WeeDb {
             let migration = migrations
                 .migrations
                 .get(&version)
-                .ok_or(MigrationError::MigrationNotFound(version))?;
+                .ok_or(Error::MigrationNotFound(version))?;
             tracing::info!(?version, "applying migration");
 
-            self.raw.put(DB_VERSION_KEY, (*migration)(self)?)?;
+            migrations
+                .version_provider
+                .set_version(self, (*migration)(self)?)?;
         }
     }
 }
@@ -499,11 +541,44 @@ impl WeeDb {
 /// The simplest stored semver.
 pub type Semver = [u8; 3];
 
-type Migration = Box<dyn Fn(&WeeDb) -> Result<Semver, MigrationError>>;
+type Migration = Box<dyn Fn(&WeeDb) -> Result<Semver, Error>>;
+
+pub trait VersionProvider {
+    fn get_version(&self, db: &WeeDb) -> Result<Option<Semver>, Error>;
+    fn set_version(&self, db: &WeeDb, version: Semver) -> Result<(), Error>;
+}
+
+/// A simple version provider.
+///
+/// Uses `weedb_version` entry in the `default` column family.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DefaultVersionProvider;
+
+impl DefaultVersionProvider {
+    const DB_VERSION_KEY: &str = "weedb_version";
+}
+
+impl VersionProvider for DefaultVersionProvider {
+    fn get_version(&self, db: &WeeDb) -> Result<Option<Semver>, Error> {
+        match db.raw.get(Self::DB_VERSION_KEY)? {
+            Some(version) => version
+                .try_into()
+                .map_err(|_| Error::InvalidDbVersion)
+                .map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn set_version(&self, db: &WeeDb, version: Semver) -> Result<(), Error> {
+        db.raw
+            .put(Self::DB_VERSION_KEY, version)
+            .map_err(Error::DbError)
+    }
+}
 
 /// Error type for migration related errors.
 #[derive(thiserror::Error, Debug)]
-pub enum MigrationError {
+pub enum Error {
     #[error("incompatible DB version")]
     IncompatibleDbVersion { version: Semver, expected: Semver },
     #[error("existing DB version not found")]
@@ -516,4 +591,93 @@ pub enum MigrationError {
     DuplicateMigration(Semver),
     #[error("db error")]
     DbError(#[from] rocksdb::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Describe column family
+    struct MyTable;
+
+    impl ColumnFamily for MyTable {
+        // Column family name
+        const NAME: &'static str = "my_table";
+
+        // Modify general options
+        fn options(opts: &mut rocksdb::Options, caches: &Caches) {
+            opts.set_write_buffer_size(128 * 1024 * 1024);
+
+            let mut block_factory = rocksdb::BlockBasedOptions::default();
+            block_factory.set_block_cache(&caches.block_cache);
+            block_factory.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
+
+            opts.set_block_based_table_factory(&block_factory);
+
+            opts.set_optimize_filters_for_hits(true);
+        }
+
+        // Modify read options
+        fn read_options(opts: &mut rocksdb::ReadOptions) {
+            opts.set_verify_checksums(false);
+        }
+
+        // Modify write options
+        fn write_options(_: &mut rocksdb::WriteOptions) {
+            // ...
+        }
+    }
+
+    #[test]
+    fn caches_and_builder() -> Result<(), Box<dyn std::error::Error>> {
+        let utime = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let db_path = format!("/tmp/weedb_{utime}");
+        std::fs::create_dir_all(&db_path)?;
+
+        // Prepare caches
+        let caches = Caches::default();
+
+        // Prepare db
+        let db = WeeDb::builder(&db_path, caches)
+            .options(|opts, _| {
+                // Example configuration:
+
+                opts.set_level_compaction_dynamic_level_bytes(true);
+
+                // Compression opts
+                opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
+                opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+
+                // Logging
+                opts.set_log_level(rocksdb::LogLevel::Error);
+                opts.set_keep_log_file_num(2);
+                opts.set_recycle_log_file_num(2);
+
+                // Cfs
+                opts.create_if_missing(true);
+                opts.create_missing_column_families(true);
+            })
+            .with_table::<MyTable>() // register column families
+            .build()?;
+
+        // Prepare and apply migration
+        let mut migrations = Migrations::with_target_version([0, 1, 0]);
+        migrations.register([0, 0, 0], [0, 1, 0], |_| {
+            // do some migration stuff
+            Ok(())
+        })?;
+
+        db.apply(migrations)?;
+
+        // Table usage example
+        let my_table = db.instantiate_table::<MyTable>();
+        my_table.insert(b"asd", b"123")?;
+        assert!(my_table.get(b"asd")?.is_some());
+
+        Ok(())
+    }
 }

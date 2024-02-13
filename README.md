@@ -1,3 +1,4 @@
+
 ## WeeDB &emsp; [![crates-io-batch]][crates-io-link] [![docs-badge]][docs-url] [![rust-version-badge]][rust-version-link]
 
 [crates-io-batch]: https://img.shields.io/crates/v/weedb.svg

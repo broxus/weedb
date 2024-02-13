@@ -118,6 +118,9 @@ impl Builder {
 /// # Example
 ///
 /// ```rust
+/// use weedb::{ColumnFamily,Caches};
+/// use weedb::rocksdb::{Options, ReadOptions, WriteOptions, BlockBasedOptions, DataBlockIndexType};
+///
 /// struct Cells;
 ///
 /// impl ColumnFamily for Cells {
@@ -538,7 +541,7 @@ pub trait VersionProvider {
 pub struct DefaultVersionProvider;
 
 impl DefaultVersionProvider {
-    const DB_VERSION_KEY: &str = "weedb_version";
+    const DB_VERSION_KEY: &'static str = "weedb_version";
 }
 
 impl VersionProvider for DefaultVersionProvider {

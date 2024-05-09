@@ -2,14 +2,25 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use rocksdb;
+use rocksdb::statistics::StatsLevel;
+
+#[cfg(feature = "metrics")]
+mod metrics;
 
 /// A thin wrapper around RocksDB.
 #[derive(Clone)]
 pub struct WeeDb {
+    inner: Arc<WeeDbInner>,
+}
+
+pub struct WeeDbInner {
     raw: Arc<rocksdb::DB>,
     caches: Caches,
+    options: rocksdb::Options,
+    cf_names: Vec<&'static str>,
 }
 
 impl WeeDb {
@@ -20,18 +31,18 @@ impl WeeDb {
 
     /// Creates a table instance.
     pub fn instantiate_table<T: ColumnFamily>(&self) -> Table<T> {
-        Table::new(self.raw.clone())
+        Table::new(self.inner.raw.clone())
     }
 
     /// Collects DB and cache memory usage stats.
     pub fn get_memory_usage_stats(&self) -> Result<Stats, rocksdb::Error> {
         let whole_db_stats = rocksdb::perf::get_memory_usage_stats(
-            Some(&[&self.raw]),
-            Some(&[&self.caches.block_cache]),
+            Some(&[&self.inner.raw]),
+            Some(&[&self.inner.caches.block_cache]),
         )?;
 
-        let block_cache_usage = self.caches.block_cache.get_usage();
-        let block_cache_pined_usage = self.caches.block_cache.get_pinned_usage();
+        let block_cache_usage = self.inner.caches.block_cache.get_usage();
+        let block_cache_pined_usage = self.inner.caches.block_cache.get_pinned_usage();
 
         Ok(Stats {
             whole_db_stats,
@@ -43,13 +54,13 @@ impl WeeDb {
     /// Returns an underlying RocksDB instance.
     #[inline]
     pub fn raw(&self) -> &Arc<rocksdb::DB> {
-        &self.raw
+        &self.inner.raw
     }
 
     /// Returns an underlying caches group.
     #[inline]
     pub fn caches(&self) -> &Caches {
-        &self.caches
+        &self.inner.caches
     }
 }
 
@@ -66,6 +77,8 @@ pub struct Builder {
     options: rocksdb::Options,
     caches: Caches,
     descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
+    cf_names: Vec<&'static str>,
+    metrics_updater_interval: Option<Duration>,
 }
 
 impl Builder {
@@ -76,6 +89,8 @@ impl Builder {
             options: Default::default(),
             caches,
             descriptors: Default::default(),
+            cf_names: Default::default(),
+            metrics_updater_interval: Default::default(),
         }
     }
 
@@ -97,19 +112,51 @@ impl Builder {
         T::options(&mut opts, &self.caches);
         self.descriptors
             .push(rocksdb::ColumnFamilyDescriptor::new(T::NAME, opts));
+        self.cf_names.push(T::NAME);
+        self
+    }
+
+    /// # Args
+    /// - `loop_updater_interval` - interval for metrics updater loop.
+    /// if `None` - metrics updater loop will be disabled.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics_updater(mut self, loop_updater_interval: Option<Duration>) -> Self {
+        self.metrics_updater_interval = loop_updater_interval;
         self
     }
 
     /// Opens a DB instance.
-    pub fn build(self) -> Result<WeeDb, rocksdb::Error> {
-        Ok(WeeDb {
+    pub fn build(mut self) -> Result<WeeDb, rocksdb::Error> {
+        #[cfg(feature = "metrics")]
+        if self.metrics_updater_interval.is_some() {
+            self.options.enable_statistics();
+            self.options
+                .set_statistics_level(StatsLevel::ExceptDetailedTimers);
+        }
+
+        let db = WeeDbInner {
             raw: Arc::new(rocksdb::DB::open_cf_descriptors(
                 &self.options,
                 &self.path,
                 self.descriptors,
             )?),
             caches: self.caches,
-        })
+            options: self.options,
+            cf_names: self.cf_names,
+        };
+        let db = WeeDb {
+            inner: Arc::new(db),
+        };
+
+        #[cfg(feature = "metrics")]
+        if let Some(interval) = self.metrics_updater_interval {
+            let db = Arc::downgrade(&db.inner);
+            std::thread::spawn(move || {
+                metrics::metrics_update_loop(&db, interval);
+            });
+        }
+
+        Ok(db)
     }
 }
 
@@ -546,7 +593,7 @@ impl DefaultVersionProvider {
 
 impl VersionProvider for DefaultVersionProvider {
     fn get_version(&self, db: &WeeDb) -> Result<Option<Semver>, Error> {
-        match db.raw.get(Self::DB_VERSION_KEY)? {
+        match db.inner.raw.get(Self::DB_VERSION_KEY)? {
             Some(version) => version
                 .try_into()
                 .map_err(|_| Error::InvalidDbVersion)
@@ -556,7 +603,8 @@ impl VersionProvider for DefaultVersionProvider {
     }
 
     fn set_version(&self, db: &WeeDb, version: Semver) -> Result<(), Error> {
-        db.raw
+        db.inner
+            .raw
             .put(Self::DB_VERSION_KEY, version)
             .map_err(Error::DbError)
     }

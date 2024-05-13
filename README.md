@@ -96,15 +96,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+# How to generate grafana dashboard
+
+```bash
+cd scripts
+python3 -m venv venv
+# activate venv according to your shell (source venv/bin/activate)
+pip install -r requirements.txt
+python rocksdb_metrics.py dashboard.json
+```
+
 ## Contributing
 
-We welcome contributions to the project! If you notice any issues or errors, feel free to open an issue or submit a pull request.
+We welcome contributions to the project! If you notice any issues or errors,
+feel free to open an issue or submit a pull request.
 
 ## License
 
 Licensed under either of
 
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)
+  or <http://www.apache.org/licenses/LICENSE-2.0>)
+* MIT license ([LICENSE-MIT](LICENSE-MIT)
+  or <http://opensource.org/licenses/MIT>)
 
 at your option.

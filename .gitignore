@@ -2,3 +2,10 @@
 Cargo.lock
 
 .idea/
+.code/
+
+# python stuff
+__pycache__/
+*.py[cod]
+*$py.class
+scripts/venv

@@ -1,6 +1,6 @@
 [package]
 name = "weedb"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "A thin wrapper around RocksDB."
 authors = ["Rexagon", "0xdeafbeef"]
@@ -12,12 +12,15 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 thiserror = "1.0"
 tracing = "0.1"
+metrics = { version = "0.22.3", optional = true }
 
 librocksdb-sys = "0.16.0"
 rocksdb = { version = "0.22.0", features = ["multi-threaded-cf"], default-features = false }
 
 [features]
-default = ["zstd", "lz4", "jemalloc"]
+default = ["zstd", "lz4", "jemalloc", "metrics"]
 zstd = ["rocksdb/zstd"]
 lz4 = ["rocksdb/lz4"]
 jemalloc = ["rocksdb/jemalloc"]
+metrics = ["dep:metrics"]
+

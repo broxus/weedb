@@ -21,15 +21,16 @@ pub struct WeeDbInner {
     caches: Caches,
     options: rocksdb::Options,
     cf_names: Vec<&'static str>,
+    db_name: Option<&'static str>,
 }
 
 impl WeeDb {
     /// Creates a DB builder.
-    pub fn builder<P>(path: P, caches: Caches, named: &'static str) -> Builder<P>
+    pub fn builder<P>(path: P, caches: Caches) -> Builder<P>
     where
         P: AsRef<Path>,
     {
-        Builder::new(path, caches, named)
+        Builder::new(path, caches)
     }
 
     /// Creates a table instance.
@@ -65,6 +66,12 @@ impl WeeDb {
     pub fn caches(&self) -> &Caches {
         &self.inner.caches
     }
+
+    /// Returns a DB name if it was set.
+    #[inline]
+    pub fn db_name(&self) -> Option<&'static str> {
+        self.inner.db_name
+    }
 }
 
 /// Memory usage stats.
@@ -81,8 +88,8 @@ pub struct Builder<P> {
     caches: Caches,
     descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
     cf_names: Vec<&'static str>,
-    metrics_updater_interval: Option<Duration>,
-    db_name: &'static str,
+    metrics_update_interval: Option<Duration>,
+    db_name: Option<&'static str>,
 }
 
 impl<P> Builder<P>
@@ -94,16 +101,22 @@ where
     /// - `path` - path to the DB directory. Will be created if not exists.
     /// - `caches` - a group of caches used by the DB.
     /// - `named` - DB name. Used as label in metrics.
-    pub fn new(path: P, caches: Caches, named: &'static str) -> Self {
+    pub fn new(path: P, caches: Caches) -> Self {
         Self {
             path,
             options: Default::default(),
             caches,
             descriptors: Default::default(),
             cf_names: Default::default(),
-            metrics_updater_interval: Default::default(),
-            db_name: named,
+            metrics_update_interval: Default::default(),
+            db_name: None,
         }
+    }
+
+    /// Sets DB name. Used as label in metrics.
+    pub fn with_name(mut self, name: &'static str) -> Self {
+        self.db_name = Some(name);
+        self
     }
 
     /// Modifies global options.
@@ -132,15 +145,15 @@ where
     /// - `loop_updater_interval` - interval for metrics updater loop.
     /// if `None` - metrics updater loop will be disabled.
     #[cfg(feature = "metrics")]
-    pub fn with_metrics_updater(mut self, loop_updater_interval: Option<Duration>) -> Self {
-        self.metrics_updater_interval = loop_updater_interval;
+    pub fn with_metrics_update_interval(mut self, interval: Option<Duration>) -> Self {
+        self.metrics_update_interval = interval;
         self
     }
 
     /// Opens a DB instance.
     pub fn build(mut self) -> Result<WeeDb, rocksdb::Error> {
         #[cfg(feature = "metrics")]
-        if self.metrics_updater_interval.is_some() {
+        if self.metrics_update_interval.is_some() {
             self.options.enable_statistics();
             self.options
                 .set_statistics_level(StatsLevel::ExceptDetailedTimers);
@@ -155,13 +168,14 @@ where
             caches: self.caches,
             options: self.options,
             cf_names: self.cf_names,
+            db_name: self.db_name,
         };
         let db = WeeDb {
             inner: Arc::new(db),
         };
 
         #[cfg(feature = "metrics")]
-        if let Some(interval) = self.metrics_updater_interval {
+        if let Some(interval) = self.metrics_update_interval {
             let db = Arc::downgrade(&db.inner);
             std::thread::spawn(move || {
                 metrics::metrics_update_loop(&db, interval, self.db_name);

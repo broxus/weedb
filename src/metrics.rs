@@ -100,8 +100,8 @@ const ROCKSDB_CF_PROPERTIES: &[(&str, Unit)] = &[
 
 pub(crate) fn metrics_update_loop(
     db: &Weak<WeeDbInner>,
-    loop_resolution: Duration,
-    db_name: &'static str,
+    interval: Duration,
+    db_name: Option<&'static str>,
 ) {
     // describe metrics
     for (ticker, unit) in ROCKSDB_TICKERS {
@@ -123,7 +123,10 @@ pub(crate) fn metrics_update_loop(
         metrics::describe_gauge!(format!("rocksdb_{sanitized_name}"), *unit, "");
     }
 
-    let labels = vec![Label::from_static_parts("db", db_name)];
+    let mut labels = Vec::with_capacity(2);
+    if let Some(db_name) = db_name {
+        labels.push(Label::from_static_parts("db", db_name));
+    }
 
     loop {
         let Some(db) = db.upgrade() else { return };
@@ -152,7 +155,7 @@ pub(crate) fn metrics_update_loop(
             }
         }
 
-        std::thread::sleep(loop_resolution);
+        std::thread::sleep(interval);
     }
 }
 

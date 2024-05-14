@@ -98,7 +98,11 @@ const ROCKSDB_CF_PROPERTIES: &[(&str, Unit)] = &[
     ("rocksdb.num-files-at-level6", Unit::Count),
 ];
 
-pub(crate) fn metrics_update_loop(db: &Weak<WeeDbInner>, loop_resolution: Duration) {
+pub(crate) fn metrics_update_loop(
+    db: &Weak<WeeDbInner>,
+    loop_resolution: Duration,
+    db_name: &'static str,
+) {
     // describe metrics
     for (ticker, unit) in ROCKSDB_TICKERS {
         let sanitized_name = sanitize_metric_name(ticker.name());
@@ -119,6 +123,8 @@ pub(crate) fn metrics_update_loop(db: &Weak<WeeDbInner>, loop_resolution: Durati
         metrics::describe_gauge!(format!("rocksdb_{sanitized_name}"), *unit, "");
     }
 
+    let labels = vec![Label::from_static_parts("db", db_name)];
+
     loop {
         let Some(db) = db.upgrade() else { return };
         let options = &db.options;
@@ -130,7 +136,7 @@ pub(crate) fn metrics_update_loop(db: &Weak<WeeDbInner>, loop_resolution: Durati
         for (ticker, _) in ROCKSDB_TICKERS {
             let count = options.get_ticker_count(*ticker);
             let sanitized_name = sanitize_metric_name(ticker.name());
-            metrics::gauge!(sanitized_name).set(count as f64);
+            metrics::gauge!(sanitized_name, labels.clone()).set(count as f64);
         }
 
         for (cf, name) in handles {
@@ -138,7 +144,11 @@ pub(crate) fn metrics_update_loop(db: &Weak<WeeDbInner>, loop_resolution: Durati
                 let Ok(Some(value)) = db.raw.property_int_value_cf(&cf, *property) else {
                     continue;
                 };
-                format_rocksdb_property_for_prometheus(&[Label::new("cf", *name)], property, value);
+
+                let mut labels = labels.clone();
+                labels.push(Label::from_static_parts("cf", name));
+
+                format_rocksdb_property_for_prometheus(labels, property, value);
             }
         }
 
@@ -175,9 +185,10 @@ fn format_rocksdb_histogram_for_prometheus(name: &str, data: HistogramData, labe
     }
 }
 
-fn format_rocksdb_property_for_prometheus(labels: &[Label], name: &str, value: u64) {
+// vec is used because IntoLabels collects into Vec<Label>, so copying of Vec is cheaper
+fn format_rocksdb_property_for_prometheus(labels: Vec<Label>, name: &str, value: u64) {
     let sanitized_name = sanitize_metric_name(name);
-    metrics::gauge!(sanitized_name, labels.iter()).set(value as f64);
+    metrics::gauge!(sanitized_name, labels).set(value as f64);
 }
 
 fn sanitize_metric_name(name: &str) -> String {

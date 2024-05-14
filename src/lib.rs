@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,8 +25,11 @@ pub struct WeeDbInner {
 
 impl WeeDb {
     /// Creates a DB builder.
-    pub fn builder<P: Into<PathBuf>>(path: P, caches: Caches) -> Builder {
-        Builder::new(path.into(), caches)
+    pub fn builder<P>(path: P, caches: Caches, named: &'static str) -> Builder<P>
+    where
+        P: AsRef<Path>,
+    {
+        Builder::new(path, caches, named)
     }
 
     /// Creates a table instance.
@@ -72,18 +75,26 @@ pub struct Stats {
 }
 
 /// DB builder with a definition of all tables.
-pub struct Builder {
-    path: PathBuf,
+pub struct Builder<P> {
+    path: P,
     options: rocksdb::Options,
     caches: Caches,
     descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
     cf_names: Vec<&'static str>,
     metrics_updater_interval: Option<Duration>,
+    db_name: &'static str,
 }
 
-impl Builder {
+impl<P> Builder<P>
+where
+    P: AsRef<Path>,
+{
     /// Creates a DB builder.
-    pub fn new(path: PathBuf, caches: Caches) -> Self {
+    /// # Args
+    /// - `path` - path to the DB directory. Will be created if not exists.
+    /// - `caches` - a group of caches used by the DB.
+    /// - `named` - DB name. Used as label in metrics.
+    pub fn new(path: P, caches: Caches, named: &'static str) -> Self {
         Self {
             path,
             options: Default::default(),
@@ -91,6 +102,7 @@ impl Builder {
             descriptors: Default::default(),
             cf_names: Default::default(),
             metrics_updater_interval: Default::default(),
+            db_name: named,
         }
     }
 
@@ -137,7 +149,7 @@ impl Builder {
         let db = WeeDbInner {
             raw: Arc::new(rocksdb::DB::open_cf_descriptors(
                 &self.options,
-                &self.path,
+                self.path,
                 self.descriptors,
             )?),
             caches: self.caches,
@@ -152,7 +164,7 @@ impl Builder {
         if let Some(interval) = self.metrics_updater_interval {
             let db = Arc::downgrade(&db.inner);
             std::thread::spawn(move || {
-                metrics::metrics_update_loop(&db, interval);
+                metrics::metrics_update_loop(&db, interval, self.db_name);
             });
         }
 

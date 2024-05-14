@@ -1,6 +1,6 @@
 [package]
 name = "weedb"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "A thin wrapper around RocksDB."
 authors = ["Rexagon", "0xdeafbeef"]
@@ -23,4 +23,3 @@ zstd = ["rocksdb/zstd"]
 lz4 = ["rocksdb/lz4"]
 jemalloc = ["rocksdb/jemalloc"]
 metrics = ["dep:metrics"]
-

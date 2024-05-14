@@ -639,7 +639,7 @@ impl VersionProvider for DefaultVersionProvider {
 /// Error type for migration related errors.
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("incompatible DB version")]
+    #[error("incompatible DB version: {version:?}, expected {expected:?}")]
     IncompatibleDbVersion { version: Semver, expected: Semver },
     #[error("existing DB version not found")]
     VersionNotFound,
@@ -649,7 +649,7 @@ pub enum Error {
     MigrationNotFound(Semver),
     #[error("duplicate migration: {0:?}")]
     DuplicateMigration(Semver),
-    #[error("db error")]
+    #[error("db error: {0}")]
     DbError(#[from] rocksdb::Error),
 }
 

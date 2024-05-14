@@ -13,7 +13,7 @@ from grafanalib.core import (
     Target,
 )
 
-from common import (
+from dashboard_builder import (
     Layout,
     timeseries_panel,
     target,

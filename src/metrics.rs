@@ -1,9 +1,6 @@
 use metrics::{Label, Unit};
 use rocksdb::statistics::{Histogram, HistogramData, Ticker};
 
-use std::sync::Weak;
-use std::time::Duration;
-
 use crate::WeeDbInner;
 
 const ROCKSDB_TICKERS: &[(Ticker, Unit)] = &[
@@ -98,64 +95,65 @@ const ROCKSDB_CF_PROPERTIES: &[(&str, Unit)] = &[
     ("rocksdb.num-files-at-level6", Unit::Count),
 ];
 
-pub(crate) fn metrics_update_loop(
-    db: &Weak<WeeDbInner>,
-    interval: Duration,
-    db_name: Option<&'static str>,
-) {
-    // describe metrics
-    for (ticker, unit) in ROCKSDB_TICKERS {
-        let sanitized_name = sanitize_metric_name(ticker.name());
-        metrics::describe_gauge!(format!("rocksdb_{sanitized_name}"), *unit, "");
-    }
+impl WeeDbInner {
+    pub(crate) fn register_metrics(&self) {
+        // Describe metrics
+        for (ticker, unit) in ROCKSDB_TICKERS {
+            let sanitized_name = sanitize_metric_name(ticker.name());
+            metrics::describe_gauge!(sanitized_name, *unit, "");
+        }
 
-    // register doesn't consume resource, so we don't hide it unlike exposing useless histograms
-    for (histogram, unit) in ROCKSDB_HISTOGRAMS {
-        let sanitized_name = sanitize_metric_name(histogram.name());
-        for postfix in HISTOGRAM_POSTFIXES {
-            let metric_name = format!("rocksdb_{}_{}", sanitized_name, postfix);
-            metrics::describe_gauge!(metric_name, *unit, "");
+        // Register doesn't consume resource, so we don't hide it unlike exposing useless histograms
+        for (histogram, unit) in ROCKSDB_HISTOGRAMS {
+            let sanitized_name = sanitize_metric_name(histogram.name());
+            for postfix in HISTOGRAM_POSTFIXES {
+                let metric_name = format!("{sanitized_name}_{postfix}");
+                metrics::describe_gauge!(metric_name, *unit, "");
+            }
+        }
+
+        for (property, unit) in ROCKSDB_DB_PROPERTIES {
+            let sanitized_name = sanitize_metric_name(property);
+            metrics::describe_gauge!(sanitized_name, *unit, "");
         }
     }
 
-    for (property, unit) in ROCKSDB_DB_PROPERTIES {
-        let sanitized_name = sanitize_metric_name(property);
-        metrics::describe_gauge!(format!("rocksdb_{sanitized_name}"), *unit, "");
-    }
+    pub(crate) fn refresh_metrics(&self) {
+        if !self.metrics_enabled {
+            return;
+        }
 
-    let mut labels = Vec::with_capacity(2);
-    if let Some(db_name) = db_name {
-        labels.push(Label::from_static_parts("db", db_name));
-    }
+        let mut labels = Vec::with_capacity(2);
+        if let Some(db_name) = self.db_name {
+            labels.push(Label::from_static_parts("db", db_name));
+        }
 
-    loop {
-        let Some(db) = db.upgrade() else { return };
-        let options = &db.options;
-        let handles = db
+        let options = &self.options;
+        let handles = self
             .cf_names
             .iter()
-            .filter_map(|name| db.raw.cf_handle(name).map(|cf| (cf, name)));
+            .filter_map(|name| self.raw.cf_handle(name).map(|cf| (cf, name)));
 
         for (ticker, _) in ROCKSDB_TICKERS {
             let count = options.get_ticker_count(*ticker);
+
             let sanitized_name = sanitize_metric_name(ticker.name());
             metrics::gauge!(sanitized_name, labels.clone()).set(count as f64);
         }
 
         for (cf, name) in handles {
             for (property, _) in ROCKSDB_CF_PROPERTIES {
-                let Ok(Some(value)) = db.raw.property_int_value_cf(&cf, *property) else {
+                let Ok(Some(value)) = self.raw.property_int_value_cf(&cf, *property) else {
                     continue;
                 };
 
                 let mut labels = labels.clone();
                 labels.push(Label::from_static_parts("cf", name));
 
-                format_rocksdb_property_for_prometheus(labels, property, value);
+                let sanitized_name = sanitize_metric_name(name);
+                metrics::gauge!(sanitized_name, labels).set(value as f64);
             }
         }
-
-        std::thread::sleep(interval);
     }
 }
 
@@ -186,12 +184,6 @@ fn format_rocksdb_histogram_for_prometheus(name: &str, data: HistogramData, labe
         let metric_name = format!("{}_{}", base_sanitized_name, suffix);
         metrics::gauge!(metric_name, labels.iter()).set(*value);
     }
-}
-
-// vec is used because IntoLabels collects into Vec<Label>, so copying of Vec is cheaper
-fn format_rocksdb_property_for_prometheus(labels: Vec<Label>, name: &str, value: u64) {
-    let sanitized_name = sanitize_metric_name(name);
-    metrics::gauge!(sanitized_name, labels).set(value as f64);
 }
 
 fn sanitize_metric_name(name: &str) -> String {

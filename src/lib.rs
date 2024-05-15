@@ -2,10 +2,8 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 pub use rocksdb;
-use rocksdb::statistics::StatsLevel;
 
 #[cfg(feature = "metrics")]
 mod metrics;
@@ -19,9 +17,14 @@ pub struct WeeDb {
 pub struct WeeDbInner {
     raw: Arc<rocksdb::DB>,
     caches: Caches,
-    options: rocksdb::Options,
-    cf_names: Vec<&'static str>,
     db_name: Option<&'static str>,
+
+    #[cfg(feature = "metrics")]
+    options: rocksdb::Options,
+    #[cfg(feature = "metrics")]
+    cf_names: Vec<&'static str>,
+    #[cfg(feature = "metrics")]
+    metrics_enabled: bool,
 }
 
 impl WeeDb {
@@ -72,6 +75,14 @@ impl WeeDb {
     pub fn db_name(&self) -> Option<&'static str> {
         self.inner.db_name
     }
+
+    /// Records RocksDB statistics into metrics.
+    ///
+    /// Does nothing if metrics are disabled.
+    #[cfg(feature = "metrics")]
+    pub fn refresh_metrics(&self) {
+        self.inner.refresh_metrics();
+    }
 }
 
 /// Memory usage stats.
@@ -88,8 +99,9 @@ pub struct Builder<P> {
     caches: Caches,
     descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
     cf_names: Vec<&'static str>,
-    metrics_update_interval: Option<Duration>,
     db_name: Option<&'static str>,
+    #[cfg(feature = "metrics")]
+    metrics_enabled: bool,
 }
 
 impl<P> Builder<P>
@@ -108,8 +120,9 @@ where
             caches,
             descriptors: Default::default(),
             cf_names: Default::default(),
-            metrics_update_interval: Default::default(),
             db_name: None,
+            #[cfg(feature = "metrics")]
+            metrics_enabled: false,
         }
     }
 
@@ -141,22 +154,21 @@ where
         self
     }
 
-    /// # Args
-    /// - `loop_updater_interval` - interval for metrics updater loop.
-    /// if `None` - metrics updater loop will be disabled.
+    /// Whether to enable RocksDB statistics.
     #[cfg(feature = "metrics")]
-    pub fn with_metrics_update_interval(mut self, interval: Option<Duration>) -> Self {
-        self.metrics_update_interval = interval;
+    pub fn with_metrics_enabled(mut self, enabled: bool) -> Self {
+        self.metrics_enabled = enabled;
         self
     }
 
     /// Opens a DB instance.
+    #[allow(unused_mut)]
     pub fn build(mut self) -> Result<WeeDb, rocksdb::Error> {
         #[cfg(feature = "metrics")]
-        if self.metrics_update_interval.is_some() {
+        if self.metrics_enabled {
             self.options.enable_statistics();
             self.options
-                .set_statistics_level(StatsLevel::ExceptDetailedTimers);
+                .set_statistics_level(rocksdb::statistics::StatsLevel::ExceptDetailedTimers);
         }
 
         let db = WeeDbInner {
@@ -166,23 +178,23 @@ where
                 self.descriptors,
             )?),
             caches: self.caches,
-            options: self.options,
-            cf_names: self.cf_names,
             db_name: self.db_name,
-        };
-        let db = WeeDb {
-            inner: Arc::new(db),
+            #[cfg(feature = "metrics")]
+            options: self.options,
+            #[cfg(feature = "metrics")]
+            cf_names: self.cf_names,
+            #[cfg(feature = "metrics")]
+            metrics_enabled: self.metrics_enabled,
         };
 
         #[cfg(feature = "metrics")]
-        if let Some(interval) = self.metrics_update_interval {
-            let db = Arc::downgrade(&db.inner);
-            std::thread::spawn(move || {
-                metrics::metrics_update_loop(&db, interval, self.db_name);
-            });
+        if self.metrics_enabled {
+            db.register_metrics();
         }
 
-        Ok(db)
+        Ok(WeeDb {
+            inner: Arc::new(db),
+        })
     }
 }
 

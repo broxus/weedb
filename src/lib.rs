@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use rocksdb;
@@ -29,10 +29,7 @@ pub struct WeeDbInner {
 
 impl WeeDb {
     /// Creates a DB builder.
-    pub fn builder<P>(path: P, caches: Caches) -> Builder<P>
-    where
-        P: AsRef<Path>,
-    {
+    pub fn builder<P: AsRef<Path>>(path: P, caches: Caches) -> Builder {
         Builder::new(path, caches)
     }
 
@@ -93,8 +90,8 @@ pub struct Stats {
 }
 
 /// DB builder with a definition of all tables.
-pub struct Builder<P> {
-    path: P,
+pub struct Builder {
+    path: PathBuf,
     options: rocksdb::Options,
     caches: Caches,
     descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
@@ -104,18 +101,15 @@ pub struct Builder<P> {
     metrics_enabled: bool,
 }
 
-impl<P> Builder<P>
-where
-    P: AsRef<Path>,
-{
+impl Builder {
     /// Creates a DB builder.
     /// # Args
     /// - `path` - path to the DB directory. Will be created if not exists.
     /// - `caches` - a group of caches used by the DB.
     /// - `named` - DB name. Used as label in metrics.
-    pub fn new(path: P, caches: Caches) -> Self {
+    pub fn new<P: AsRef<Path>>(path: P, caches: Caches) -> Self {
         Self {
-            path,
+            path: path.as_ref().to_path_buf(),
             options: Default::default(),
             caches,
             descriptors: Default::default(),

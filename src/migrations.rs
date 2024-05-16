@@ -1,6 +1,16 @@
 use std::collections::HashMap;
 
-use crate::WeeDbRaw;
+use crate::{WeeDb, WeeDbRaw};
+
+impl<T> WeeDb<T> {
+    /// Applies the provided migrations set until the target version.
+    pub fn apply<P>(&self, migrations: Migrations<P, Self>) -> Result<(), MigrationError>
+    where
+        P: VersionProvider,
+    {
+        apply_migrations(self, migrations)
+    }
+}
 
 impl WeeDbRaw {
     /// Applies the provided migrations set until the target version.
@@ -64,7 +74,7 @@ pub struct Migrations<P, D = WeeDbRaw> {
     version_provider: P,
 }
 
-impl Migrations<DefaultVersionProvider> {
+impl<D> Migrations<DefaultVersionProvider, D> {
     /// Creates a migrations collection up to the specified version
     /// with the default version provider.
     pub fn with_target_version(target_version: Semver) -> Self {
@@ -136,7 +146,7 @@ impl DefaultVersionProvider {
 
 impl VersionProvider for DefaultVersionProvider {
     fn get_version(&self, db: &WeeDbRaw) -> Result<Option<Semver>, MigrationError> {
-        match db.raw().get(Self::DB_VERSION_KEY)? {
+        match db.rocksdb().get(Self::DB_VERSION_KEY)? {
             Some(version) => version
                 .try_into()
                 .map_err(|_| MigrationError::InvalidDbVersion)
@@ -146,7 +156,7 @@ impl VersionProvider for DefaultVersionProvider {
     }
 
     fn set_version(&self, db: &WeeDbRaw, version: Semver) -> Result<(), MigrationError> {
-        db.raw()
+        db.rocksdb()
             .put(Self::DB_VERSION_KEY, version)
             .map_err(MigrationError::DbError)
     }

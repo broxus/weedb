@@ -1,7 +1,7 @@
 use metrics::{Label, Unit};
 use rocksdb::statistics::{Histogram, HistogramData, Ticker};
 
-use crate::WeeDbInner;
+use crate::WeeDbRawInner;
 
 const ROCKSDB_TICKERS: &[(Ticker, Unit)] = &[
     (Ticker::BlockCacheBytesRead, Unit::Bytes),
@@ -95,7 +95,7 @@ const ROCKSDB_CF_PROPERTIES: &[(&str, Unit)] = &[
     ("rocksdb.num-files-at-level6", Unit::Count),
 ];
 
-impl WeeDbInner {
+impl WeeDbRawInner {
     pub(crate) fn register_metrics(&self) {
         // Describe metrics
         for (ticker, unit) in ROCKSDB_TICKERS {
@@ -132,7 +132,7 @@ impl WeeDbInner {
         let handles = self
             .cf_names
             .iter()
-            .filter_map(|name| self.raw.cf_handle(name).map(|cf| (cf, name)));
+            .filter_map(|name| self.rocksdb.cf_handle(name).map(|cf| (cf, name)));
 
         for (ticker, _) in ROCKSDB_TICKERS {
             let count = options.get_ticker_count(*ticker);
@@ -143,7 +143,7 @@ impl WeeDbInner {
 
         for (cf, name) in handles {
             for (property, _) in ROCKSDB_CF_PROPERTIES {
-                let Ok(Some(value)) = self.raw.property_int_value_cf(&cf, *property) else {
+                let Ok(Some(value)) = self.rocksdb.property_int_value_cf(&cf, *property) else {
                     continue;
                 };
 

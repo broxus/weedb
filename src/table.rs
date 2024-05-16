@@ -6,27 +6,14 @@ use std::sync::Arc;
 /// # Example
 ///
 /// ```rust
-/// use weedb::{ColumnFamily,Caches};
-/// use weedb::rocksdb::{Options, ReadOptions, WriteOptions, BlockBasedOptions, DataBlockIndexType};
+/// # use weedb::{rocksdb, ColumnFamily};
 ///
 /// struct Cells;
 ///
 /// impl ColumnFamily for Cells {
 ///     const NAME: &'static str = "cells";
 ///
-///     fn options(opts: &mut Options, caches: &Caches) {
-///         opts.set_write_buffer_size(128 * 1024 * 1024);
-///
-///         let mut block_factory = BlockBasedOptions::default();
-///         block_factory.set_block_cache(&caches.block_cache);
-///         block_factory.set_data_block_index_type(DataBlockIndexType::BinaryAndHash);
-///
-///         opts.set_block_based_table_factory(&block_factory);
-///
-///         opts.set_optimize_filters_for_hits(true);
-///     }
-///
-///     fn read_options(opts: &mut ReadOptions) {
+///     fn read_options(opts: &mut rocksdb::ReadOptions) {
 ///         opts.set_verify_checksums(false);
 ///     }
 /// }
@@ -45,6 +32,36 @@ pub trait ColumnFamily {
     }
 }
 
+/// Column family options for some context.
+///
+/// # Example
+/// ```rust
+/// # use weedb::{rocksdb, Caches, ColumnFamily, ColumnFamilyOptions};
+///
+/// struct Cells;
+///
+/// impl ColumnFamily for Cells {
+///     const NAME: &'static str = "cells";
+///
+///     fn read_options(opts: &mut rocksdb::ReadOptions) {
+///         opts.set_verify_checksums(false);
+///     }
+/// }
+///
+/// impl ColumnFamilyOptions<Caches> for Cells {
+///     fn options(opts: &mut rocksdb::Options, caches: &mut Caches) {
+///         opts.set_write_buffer_size(128 * 1024 * 1024);
+///
+///         let mut block_factory = rocksdb::BlockBasedOptions::default();
+///         block_factory.set_block_cache(&caches.block_cache);
+///         block_factory.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
+///
+///         opts.set_block_based_table_factory(&block_factory);
+///
+///         opts.set_optimize_filters_for_hits(true);
+///     }
+/// }
+/// ```
 pub trait ColumnFamilyOptions<C>: ColumnFamily {
     /// Modify general options.
     fn options(opts: &mut rocksdb::Options, ctx: &mut C) {

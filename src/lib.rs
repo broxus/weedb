@@ -1,5 +1,8 @@
+#![doc = include_str!("../README.md")]
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 pub use rocksdb;
 
@@ -17,10 +20,213 @@ mod metrics;
 mod migrations;
 mod table;
 
+/// Declares a group of tables as a struct.
+///
+/// # Example
+///
+/// ```rust
+/// use weedb::{Caches, ColumnFamily, ColumnFamilyOptions};
+///
+/// struct MyTable;
+///
+/// impl ColumnFamily for MyTable {
+///     const NAME: &'static str = "my_table";
+/// }
+///
+/// impl ColumnFamilyOptions<Caches> for MyTable {}
+///
+/// weedb::tables! {
+///     /// My tables.
+///     pub struct MyTables<Caches> {
+///         pub my_table: MyTable,
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! tables {
+    ($(#[$($meta:tt)*])* $pub:vis struct $ident:ident<$context:ty> {
+        $($field_pub:vis $field:ident: $table:ty),+$(,)?
+    }) => {
+        $(#[$($meta)*])*
+        $pub struct $ident {
+            $($field_pub $field: $crate::Table<$table>,)*
+        }
+
+        impl $crate::Tables for $ident {
+            type Context = $context;
+
+            fn define(builder: $crate::RawBuilder<Self::Context>) -> $crate::RawBuilder<Self::Context> {
+                builder$(.with_table::<$table>())*
+            }
+
+            fn instantiate(db: &$crate::WeeDbRaw) -> Self {
+                Self {
+                    $($field: db.instantiate_table(),)*
+                }
+            }
+
+            fn column_families(&self) -> impl IntoIterator<Item = $crate::ColumnFamilyDescr<'_>> {
+                [$($crate::ColumnFamilyDescr {
+                    name: <$table as $crate::ColumnFamily>::NAME,
+                    cf: self.$field.cf(),
+                }),*]
+            }
+        }
+    };
+}
+
+/// A thin wrapper around RocksDB and a group of tables.
+#[repr(transparent)]
+pub struct WeeDb<T> {
+    inner: Arc<WeeDbInner<T>>,
+}
+
+impl<T: Tables> WeeDb<T> {
+    pub fn open<P, F>(path: P, context: T::Context, f: F) -> Result<Self, rocksdb::Error>
+    where
+        P: AsRef<Path>,
+        F: FnOnce(&mut rocksdb::Options, &mut T::Context),
+    {
+        let raw = WeeDbRaw::builder(path, context)
+            .options(f)
+            .with_tables::<T>()
+            .build()?;
+
+        Ok(Self {
+            inner: Arc::new(WeeDbInner {
+                tables: T::instantiate(&raw),
+                raw,
+            }),
+        })
+    }
+
+    pub async fn trigger_compaction(&self) {
+        let mut compaction_options = rocksdb::CompactOptions::default();
+        compaction_options.set_exclusive_manual_compaction(true);
+        compaction_options
+            .set_bottommost_level_compaction(rocksdb::BottommostLevelCompaction::ForceOptimized);
+
+        for table in self.inner.tables.column_families() {
+            tracing::info!(cf = table.name, "compaction started");
+
+            let instant = Instant::now();
+            let bound = Option::<[u8; 0]>::None;
+
+            self.rocksdb()
+                .compact_range_cf_opt(&table.cf, bound, bound, &compaction_options);
+
+            tracing::info!(
+                cf = table.name,
+                elapsed_sec = %instant.elapsed().as_secs_f64(),
+                "compaction finished"
+            );
+        }
+    }
+}
+
+impl<T> WeeDb<T> {
+    /// Returns a tables group.
+    pub fn tables(&self) -> &T {
+        &self.inner.tables
+    }
+
+    /// Returns an underlying RocksDB instance.
+    pub fn rocksdb(&self) -> &Arc<rocksdb::DB> {
+        self.inner.raw.rocksdb()
+    }
+
+    /// Returns an underlying wrapper.
+    pub fn raw(&self) -> &WeeDbRaw {
+        &self.inner.raw
+    }
+
+    /// Returns a DB name if it was set.
+    #[inline]
+    pub fn db_name(&self) -> Option<&'static str> {
+        self.inner.raw.db_name()
+    }
+
+    /// Returns an underlying caches group.
+    #[inline]
+    pub fn caches(&self) -> &Caches {
+        self.inner.raw.caches()
+    }
+
+    /// Collects DB and cache memory usage stats.
+    pub fn get_memory_usage_stats(&self) -> Result<Stats, rocksdb::Error> {
+        self.inner.raw.get_memory_usage_stats()
+    }
+
+    /// Records RocksDB statistics into metrics.
+    ///
+    /// Does nothing if metrics are disabled.
+    #[cfg(feature = "metrics")]
+    pub fn refresh_metrics(&self) {
+        self.inner.raw.refresh_metrics();
+    }
+}
+
+impl<T> std::fmt::Debug for WeeDb<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let raw = self.inner.raw.as_ref();
+        f.debug_struct("WeeDb")
+            .field("db_name", &raw.inner.db_name)
+            .field("tables", &raw.inner.cf_names)
+            .finish()
+    }
+}
+
+impl<T> Clone for WeeDb<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<T> AsRef<WeeDbRaw> for WeeDb<T> {
+    #[inline]
+    fn as_ref(&self) -> &WeeDbRaw {
+        &self.inner.raw
+    }
+}
+
+struct WeeDbInner<T> {
+    tables: T,
+    raw: WeeDbRaw,
+}
+
+impl<T> Drop for WeeDbInner<T> {
+    fn drop(&mut self) {
+        self.raw.rocksdb().cancel_all_background_work(true);
+    }
+}
+
+/// A group of tables that are used by the single database instance.
+pub trait Tables: Send + Sync {
+    /// Table creation context.
+    type Context: AsRef<Caches>;
+
+    /// Defines column families for the database.
+    fn define(builder: RawBuilder<Self::Context>) -> RawBuilder<Self::Context>;
+
+    /// Instantiates tables from the database.
+    fn instantiate(db: &WeeDbRaw) -> Self;
+
+    /// Returns a list of column families.
+    fn column_families(&self) -> impl IntoIterator<Item = ColumnFamilyDescr<'_>>;
+}
+
+pub struct ColumnFamilyDescr<'a> {
+    pub name: &'static str,
+    pub cf: BoundedCfHandle<'a>,
+}
+
 /// A thin wrapper around RocksDB.
 #[derive(Clone)]
+#[repr(transparent)]
 pub struct WeeDbRaw {
-    inner: Arc<WeeDbInner>,
+    inner: Arc<WeeDbRawInner>,
 }
 
 impl WeeDbRaw {
@@ -31,13 +237,13 @@ impl WeeDbRaw {
 
     /// Creates a table instance.
     pub fn instantiate_table<T: ColumnFamily>(&self) -> Table<T> {
-        Table::new(self.inner.raw.clone())
+        Table::new(self.inner.rocksdb.clone())
     }
 
     /// Returns an underlying RocksDB instance.
     #[inline]
-    pub fn raw(&self) -> &Arc<rocksdb::DB> {
-        &self.inner.raw
+    pub fn rocksdb(&self) -> &Arc<rocksdb::DB> {
+        &self.inner.rocksdb
     }
 
     /// Returns a DB name if it was set.
@@ -66,6 +272,15 @@ impl WeeDbRaw {
     }
 }
 
+impl std::fmt::Debug for WeeDbRaw {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeeDbRaw")
+            .field("db_name", &self.inner.db_name)
+            .field("cf_names", &self.inner.cf_names)
+            .finish()
+    }
+}
+
 impl AsRef<WeeDbRaw> for WeeDbRaw {
     #[inline]
     fn as_ref(&self) -> &WeeDbRaw {
@@ -73,23 +288,22 @@ impl AsRef<WeeDbRaw> for WeeDbRaw {
     }
 }
 
-struct WeeDbInner {
-    raw: Arc<rocksdb::DB>,
+struct WeeDbRawInner {
+    rocksdb: Arc<rocksdb::DB>,
     caches: Caches,
     db_name: Option<&'static str>,
+    cf_names: Vec<&'static str>,
 
     #[cfg(feature = "metrics")]
     options: rocksdb::Options,
     #[cfg(feature = "metrics")]
-    cf_names: Vec<&'static str>,
-    #[cfg(feature = "metrics")]
     metrics_enabled: bool,
 }
 
-impl WeeDbInner {
+impl WeeDbRawInner {
     fn get_memory_usage_stats(&self) -> Result<Stats, rocksdb::Error> {
         let whole_db_stats = rocksdb::perf::get_memory_usage_stats(
-            Some(&[&self.raw]),
+            Some(&[&self.rocksdb]),
             Some(&[&self.caches.block_cache]),
         )?;
 
@@ -149,9 +363,9 @@ impl<C: AsRef<Caches>> RawBuilder<C> {
     }
 
     /// Modifies global options.
-    pub fn options<F>(mut self, mut f: F) -> Self
+    pub fn options<F>(mut self, f: F) -> Self
     where
-        F: FnMut(&mut rocksdb::Options, &mut C),
+        F: FnOnce(&mut rocksdb::Options, &mut C),
     {
         f(&mut self.options, &mut self.context);
         self
@@ -168,6 +382,10 @@ impl<C: AsRef<Caches>> RawBuilder<C> {
             .push(rocksdb::ColumnFamilyDescriptor::new(T::NAME, opts));
         self.cf_names.push(T::NAME);
         self
+    }
+
+    pub fn with_tables<T: Tables<Context = C>>(self) -> Self {
+        T::define(self)
     }
 
     /// Whether to enable RocksDB statistics.
@@ -187,18 +405,17 @@ impl<C: AsRef<Caches>> RawBuilder<C> {
                 .set_statistics_level(rocksdb::statistics::StatsLevel::ExceptDetailedTimers);
         }
 
-        let db = WeeDbInner {
-            raw: Arc::new(rocksdb::DB::open_cf_descriptors(
+        let db = WeeDbRawInner {
+            rocksdb: Arc::new(rocksdb::DB::open_cf_descriptors(
                 &self.options,
                 self.path,
                 self.descriptors,
             )?),
             caches: self.context.as_ref().clone(),
             db_name: self.db_name,
+            cf_names: self.cf_names,
             #[cfg(feature = "metrics")]
             options: self.options,
-            #[cfg(feature = "metrics")]
-            cf_names: self.cf_names,
             #[cfg(feature = "metrics")]
             metrics_enabled: self.metrics_enabled,
         };
@@ -252,20 +469,45 @@ mod tests {
     }
 
     #[test]
-    fn caches_and_builder() -> Result<(), Box<dyn std::error::Error>> {
-        let utime = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    fn db_wrapper() -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
 
-        let db_path = format!("/tmp/weedb_{utime}");
-        std::fs::create_dir_all(&db_path)?;
+        tables! {
+            struct MyTables<Caches> {
+                pub my_table: MyTable,
+            }
+        }
+
+        let db = WeeDb::<MyTables>::open(&tempdir, Caches::default(), |opts, _| {
+            // Do something with options:
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+        })?;
+
+        let mut migrations = Migrations::with_target_version([0, 1, 0]);
+        migrations.register([0, 0, 0], [0, 1, 0], |_| {
+            // do some migration stuff
+            Ok(())
+        })?;
+
+        db.apply(migrations)?;
+
+        db.tables().my_table.insert(b"123", b"321")?;
+        let value = db.tables().my_table.get(b"123")?;
+        assert_eq!(value.as_deref(), Some(b"321".as_slice()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn caches_and_builder() -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
 
         // Prepare caches
         let caches = Caches::default();
 
         // Prepare db
-        let db = WeeDbRaw::builder(&db_path, caches)
+        let db = WeeDbRaw::builder(&tempdir, caches)
             .options(|opts, _| {
                 // Example configuration:
 

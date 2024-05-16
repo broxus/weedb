@@ -18,27 +18,24 @@ A thin wrapper around RocksDB.
 ### Example
 
 ```rust
-use weedb::{rocksdb, Caches, ColumnFamily, Migrations};
+use weedb::{rocksdb, Caches, ColumnFamily, ColumnFamilyOptions, Migrations, WeeDb};
 
-// Describe column family
+// Describe tables group via macros.
+//
+// A group is parametrized with a table creation context.
+weedb::tables! {
+    pub struct MyTables<Caches> {
+        pub my_table: MyTable,
+        // ..and some other tables as fields...
+    }
+}
+
+// Describe a column family.
 struct MyTable;
 
 impl ColumnFamily for MyTable {
     // Column family name
     const NAME: &'static str = "my_table";
-
-    // Modify general options
-    fn options(opts: &mut rocksdb::Options, caches: &Caches) {
-        opts.set_write_buffer_size(128 * 1024 * 1024);
-
-        let mut block_factory = rocksdb::BlockBasedOptions::default();
-        block_factory.set_block_cache(&caches.block_cache);
-        block_factory.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
-
-        opts.set_block_based_table_factory(&block_factory);
-
-        opts.set_optimize_filters_for_hits(true);
-    }
 
     // Modify read options
     fn read_options(opts: &mut rocksdb::ReadOptions) {
@@ -51,32 +48,46 @@ impl ColumnFamily for MyTable {
     }
 }
 
+// Implement cf options setup for some specific context.
+impl ColumnFamilyOptions<Caches> for MyTable {
+    // Modify general options
+    fn options(opts: &mut rocksdb::Options, caches: &mut Caches) {
+        opts.set_write_buffer_size(128 * 1024 * 1024);
+
+        // Use cache from the context
+        let mut block_factory = rocksdb::BlockBasedOptions::default();
+        block_factory.set_block_cache(&caches.block_cache);
+        block_factory.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
+
+        opts.set_block_based_table_factory(&block_factory);
+
+        opts.set_optimize_filters_for_hits(true);
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Prepare caches
     let caches = Caches::with_capacity(10 << 23);
 
     // Prepare db
-    let db = WeeDb::builder("./", caches)
-        .options(|opts, _| {
-            // Example configuration:
+    let db = WeeDb::<MyTables>::open("./", caches, |opts, _ctx| {
+        // Example configuration:
 
-            opts.set_level_compaction_dynamic_level_bytes(true);
+        opts.set_level_compaction_dynamic_level_bytes(true);
 
-            // Compression opts
-            opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
-            opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+        // Compression opts
+        opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
+        opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
 
-            // Logging
-            opts.set_log_level(rocksdb::LogLevel::Error);
-            opts.set_keep_log_file_num(2);
-            opts.set_recycle_log_file_num(2);
+        // Logging
+        opts.set_log_level(rocksdb::LogLevel::Error);
+        opts.set_keep_log_file_num(2);
+        opts.set_recycle_log_file_num(2);
 
-            // Cfs
-            opts.create_if_missing(true);
-            opts.create_missing_column_families(true);
-        })
-        .with_table::<MyTable>() // register column families
-        .build()?;
+        // Cfs
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+    })?;
 
     // Prepare and apply migration
     let mut migrations = Migrations::with_target_version([0, 1, 0]);
@@ -88,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     db.apply(migrations)?;
 
     // Table usage example
-    let my_table = db.instantiate_table::<MyTable>();
+    let my_table = &db.tables().my_table;
     my_table.insert(b"asd", b"123")?;
     assert!(my_table.get(b"asd")?.is_some());
 

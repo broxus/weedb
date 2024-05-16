@@ -17,6 +17,9 @@ metrics = { version = "0.22.3", optional = true }
 librocksdb-sys = "0.16.0"
 rocksdb = { version = "0.22.0", features = ["multi-threaded-cf"], default-features = false }
 
+[dev-dependencies]
+tempfile = "3.10"
+
 [features]
 default = ["zstd", "lz4", "jemalloc", "metrics"]
 zstd = ["rocksdb/zstd"]

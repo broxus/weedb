@@ -66,28 +66,34 @@ impl ColumnFamilyOptions<Caches> for MyTable {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let tempdir = tempfile::tempdir()?;
+
     // Prepare caches
     let caches = Caches::with_capacity(10 << 23);
 
     // Prepare db
-    let db = WeeDb::<MyTables>::open("./", caches, |opts, _ctx| {
-        // Example configuration:
+    let db = WeeDb::<MyTables>::builder(&tempdir, caches)
+        .with_name("test")
+        .with_metrics_enabled(true)
+        .with_options(|opts, _ctx| {
+            // Example configuration:
 
-        opts.set_level_compaction_dynamic_level_bytes(true);
+            opts.set_level_compaction_dynamic_level_bytes(true);
 
-        // Compression opts
-        opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
-        opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
+            // Compression opts
+            opts.set_zstd_max_train_bytes(32 * 1024 * 1024);
+            opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
 
-        // Logging
-        opts.set_log_level(rocksdb::LogLevel::Error);
-        opts.set_keep_log_file_num(2);
-        opts.set_recycle_log_file_num(2);
+            // Logging
+            opts.set_log_level(rocksdb::LogLevel::Error);
+            opts.set_keep_log_file_num(2);
+            opts.set_recycle_log_file_num(2);
 
-        // Cfs
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-    })?;
+            // Cfs
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+        })
+        .build()?;
 
     // Prepare and apply migration
     let mut migrations = Migrations::with_target_version([0, 1, 0]);

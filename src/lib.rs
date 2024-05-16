@@ -55,7 +55,7 @@ macro_rules! tables {
         impl $crate::Tables for $ident {
             type Context = $context;
 
-            fn define(builder: $crate::RawBuilder<Self::Context>) -> $crate::RawBuilder<Self::Context> {
+            fn define(builder: $crate::WeeDbRawBuilder<Self::Context>) -> $crate::WeeDbRawBuilder<Self::Context> {
                 builder$(.with_table::<$table>())*
             }
 
@@ -75,6 +75,79 @@ macro_rules! tables {
     };
 }
 
+/// A group of tables that are used by the single database instance.
+pub trait Tables: Send + Sync {
+    /// Table creation context.
+    type Context: AsRef<Caches>;
+
+    /// Defines column families for the database.
+    fn define(builder: WeeDbRawBuilder<Self::Context>) -> WeeDbRawBuilder<Self::Context>;
+
+    /// Instantiates tables from the database.
+    fn instantiate(db: &WeeDbRaw) -> Self;
+
+    /// Returns a list of column families.
+    fn column_families(&self) -> impl IntoIterator<Item = ColumnFamilyDescr<'_>>;
+}
+
+pub struct ColumnFamilyDescr<'a> {
+    pub name: &'static str,
+    pub cf: BoundedCfHandle<'a>,
+}
+
+/// [`WeeDb`] builder.
+pub struct WeeDbBuilder<T: Tables> {
+    inner: WeeDbRawBuilder<T::Context>,
+}
+
+impl<T: Tables> WeeDbBuilder<T> {
+    /// Creates a DB builder.
+    ///
+    /// # Args
+    /// - `path` - path to the DB directory. Will be created if not exists.
+    /// - `context` - table creation context.
+    pub fn new<P: AsRef<Path>>(path: P, context: T::Context) -> Self {
+        Self {
+            inner: WeeDbRawBuilder::new(path, context),
+        }
+    }
+
+    /// Sets DB name. Used as label in metrics.
+    pub fn with_name(mut self, name: &'static str) -> Self {
+        self.inner = self.inner.with_name(name);
+        self
+    }
+
+    /// Modifies global options.
+    pub fn with_options<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(&mut rocksdb::Options, &mut T::Context),
+    {
+        self.inner = self.inner.with_options(f);
+        self
+    }
+
+    /// Whether to enable RocksDB statistics.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics_enabled(mut self, enabled: bool) -> Self {
+        self.inner = self.inner.with_metrics_enabled(enabled);
+        self
+    }
+
+    /// Opens a DB instance.
+    #[allow(unused_mut)]
+    pub fn build(mut self) -> Result<WeeDb<T>, rocksdb::Error> {
+        let raw = self.inner.with_tables::<T>().build()?;
+
+        Ok(WeeDb {
+            inner: Arc::new(WeeDbInner {
+                tables: T::instantiate(&raw),
+                raw,
+            }),
+        })
+    }
+}
+
 /// A thin wrapper around RocksDB and a group of tables.
 #[repr(transparent)]
 pub struct WeeDb<T> {
@@ -82,22 +155,13 @@ pub struct WeeDb<T> {
 }
 
 impl<T: Tables> WeeDb<T> {
-    pub fn open<P, F>(path: P, context: T::Context, f: F) -> Result<Self, rocksdb::Error>
-    where
-        P: AsRef<Path>,
-        F: FnOnce(&mut rocksdb::Options, &mut T::Context),
-    {
-        let raw = WeeDbRaw::builder(path, context)
-            .options(f)
-            .with_tables::<T>()
-            .build()?;
-
-        Ok(Self {
-            inner: Arc::new(WeeDbInner {
-                tables: T::instantiate(&raw),
-                raw,
-            }),
-        })
+    /// Creates a DB builder.
+    ///
+    /// # Args
+    /// - `path` - path to the DB directory. Will be created if not exists.
+    /// - `context` - table creation context.
+    pub fn builder<P: AsRef<Path>>(path: P, context: T::Context) -> WeeDbBuilder<T> {
+        WeeDbBuilder::new(path, context)
     }
 
     pub async fn trigger_compaction(&self) {
@@ -142,7 +206,7 @@ impl<T> WeeDb<T> {
 
     /// Returns a DB name if it was set.
     #[inline]
-    pub fn db_name(&self) -> Option<&'static str> {
+    pub fn db_name(&self) -> Option<&str> {
         self.inner.raw.db_name()
     }
 
@@ -202,24 +266,110 @@ impl<T> Drop for WeeDbInner<T> {
     }
 }
 
-/// A group of tables that are used by the single database instance.
-pub trait Tables: Send + Sync {
-    /// Table creation context.
-    type Context: AsRef<Caches>;
-
-    /// Defines column families for the database.
-    fn define(builder: RawBuilder<Self::Context>) -> RawBuilder<Self::Context>;
-
-    /// Instantiates tables from the database.
-    fn instantiate(db: &WeeDbRaw) -> Self;
-
-    /// Returns a list of column families.
-    fn column_families(&self) -> impl IntoIterator<Item = ColumnFamilyDescr<'_>>;
+/// [`WeeDbRaw`] builder.
+pub struct WeeDbRawBuilder<C> {
+    path: PathBuf,
+    options: rocksdb::Options,
+    context: C,
+    descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
+    cf_names: Vec<&'static str>,
+    db_name: Option<&'static str>,
+    #[cfg(feature = "metrics")]
+    metrics_enabled: bool,
 }
 
-pub struct ColumnFamilyDescr<'a> {
-    pub name: &'static str,
-    pub cf: BoundedCfHandle<'a>,
+impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
+    /// Creates a DB builder.
+    ///
+    /// # Args
+    /// - `path` - path to the DB directory. Will be created if not exists.
+    /// - `context` - table creation context.
+    pub fn new<P: AsRef<Path>>(path: P, context: C) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            options: Default::default(),
+            context,
+            descriptors: Default::default(),
+            cf_names: Default::default(),
+            db_name: None,
+            #[cfg(feature = "metrics")]
+            metrics_enabled: false,
+        }
+    }
+
+    /// Sets DB name. Used as label in metrics.
+    pub fn with_name(mut self, name: &'static str) -> Self {
+        self.db_name = Some(name);
+        self
+    }
+
+    /// Modifies global options.
+    pub fn with_options<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(&mut rocksdb::Options, &mut C),
+    {
+        f(&mut self.options, &mut self.context);
+        self
+    }
+
+    /// Adds a new column familty.
+    pub fn with_table<T>(mut self) -> Self
+    where
+        T: ColumnFamilyOptions<C>,
+    {
+        let mut opts = Default::default();
+        T::options(&mut opts, &mut self.context);
+        self.descriptors
+            .push(rocksdb::ColumnFamilyDescriptor::new(T::NAME, opts));
+        self.cf_names.push(T::NAME);
+        self
+    }
+
+    pub fn with_tables<T: Tables<Context = C>>(self) -> Self {
+        T::define(self)
+    }
+
+    /// Whether to enable RocksDB statistics.
+    #[cfg(feature = "metrics")]
+    pub fn with_metrics_enabled(mut self, enabled: bool) -> Self {
+        self.metrics_enabled = enabled;
+        self
+    }
+
+    /// Opens a DB instance.
+    #[allow(unused_mut)]
+    pub fn build(mut self) -> Result<WeeDbRaw, rocksdb::Error> {
+        #[cfg(feature = "metrics")]
+        if self.metrics_enabled {
+            self.options.enable_statistics();
+            self.options
+                .set_statistics_level(rocksdb::statistics::StatsLevel::ExceptDetailedTimers);
+        }
+
+        let db = WeeDbRawInner {
+            rocksdb: Arc::new(rocksdb::DB::open_cf_descriptors(
+                &self.options,
+                self.path,
+                self.descriptors,
+            )?),
+            caches: self.context.as_ref().clone(),
+            db_name: self.db_name,
+            cf_names: self.cf_names,
+            #[cfg(feature = "metrics")]
+            options: self.options,
+            #[cfg(feature = "metrics")]
+            metrics_enabled: self.metrics_enabled,
+        };
+
+        #[cfg(feature = "metrics")]
+        if self.metrics_enabled {
+            db.register_metrics();
+        }
+
+        Ok(WeeDbRaw {
+            inner: Arc::new(db),
+        })
+    }
 }
 
 /// A thin wrapper around RocksDB.
@@ -231,8 +381,8 @@ pub struct WeeDbRaw {
 
 impl WeeDbRaw {
     /// Creates a DB builder.
-    pub fn builder<P: AsRef<Path>, C: AsRef<Caches>>(path: P, context: C) -> RawBuilder<C> {
-        RawBuilder::new(path, context)
+    pub fn builder<P: AsRef<Path>, C: AsRef<Caches>>(path: P, context: C) -> WeeDbRawBuilder<C> {
+        WeeDbRawBuilder::new(path, context)
     }
 
     /// Creates a table instance.
@@ -325,112 +475,6 @@ pub struct Stats {
     pub block_cache_pined_usage: usize,
 }
 
-/// DB builder with a definition of all tables.
-pub struct RawBuilder<C> {
-    path: PathBuf,
-    options: rocksdb::Options,
-    context: C,
-    descriptors: Vec<rocksdb::ColumnFamilyDescriptor>,
-    cf_names: Vec<&'static str>,
-    db_name: Option<&'static str>,
-    #[cfg(feature = "metrics")]
-    metrics_enabled: bool,
-}
-
-impl<C: AsRef<Caches>> RawBuilder<C> {
-    /// Creates a DB builder.
-    ///
-    /// # Args
-    /// - `path` - path to the DB directory. Will be created if not exists.
-    /// - `context` - table creation context.
-    pub fn new<P: AsRef<Path>>(path: P, context: C) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-            options: Default::default(),
-            context,
-            descriptors: Default::default(),
-            cf_names: Default::default(),
-            db_name: None,
-            #[cfg(feature = "metrics")]
-            metrics_enabled: false,
-        }
-    }
-
-    /// Sets DB name. Used as label in metrics.
-    pub fn with_name(mut self, name: &'static str) -> Self {
-        self.db_name = Some(name);
-        self
-    }
-
-    /// Modifies global options.
-    pub fn options<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(&mut rocksdb::Options, &mut C),
-    {
-        f(&mut self.options, &mut self.context);
-        self
-    }
-
-    /// Adds a new column familty.
-    pub fn with_table<T>(mut self) -> Self
-    where
-        T: ColumnFamilyOptions<C>,
-    {
-        let mut opts = Default::default();
-        T::options(&mut opts, &mut self.context);
-        self.descriptors
-            .push(rocksdb::ColumnFamilyDescriptor::new(T::NAME, opts));
-        self.cf_names.push(T::NAME);
-        self
-    }
-
-    pub fn with_tables<T: Tables<Context = C>>(self) -> Self {
-        T::define(self)
-    }
-
-    /// Whether to enable RocksDB statistics.
-    #[cfg(feature = "metrics")]
-    pub fn with_metrics_enabled(mut self, enabled: bool) -> Self {
-        self.metrics_enabled = enabled;
-        self
-    }
-
-    /// Opens a DB instance.
-    #[allow(unused_mut)]
-    pub fn build(mut self) -> Result<WeeDbRaw, rocksdb::Error> {
-        #[cfg(feature = "metrics")]
-        if self.metrics_enabled {
-            self.options.enable_statistics();
-            self.options
-                .set_statistics_level(rocksdb::statistics::StatsLevel::ExceptDetailedTimers);
-        }
-
-        let db = WeeDbRawInner {
-            rocksdb: Arc::new(rocksdb::DB::open_cf_descriptors(
-                &self.options,
-                self.path,
-                self.descriptors,
-            )?),
-            caches: self.context.as_ref().clone(),
-            db_name: self.db_name,
-            cf_names: self.cf_names,
-            #[cfg(feature = "metrics")]
-            options: self.options,
-            #[cfg(feature = "metrics")]
-            metrics_enabled: self.metrics_enabled,
-        };
-
-        #[cfg(feature = "metrics")]
-        if self.metrics_enabled {
-            db.register_metrics();
-        }
-
-        Ok(WeeDbRaw {
-            inner: Arc::new(db),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,11 +522,14 @@ mod tests {
             }
         }
 
-        let db = WeeDb::<MyTables>::open(&tempdir, Caches::default(), |opts, _| {
-            // Do something with options:
-            opts.create_if_missing(true);
-            opts.create_missing_column_families(true);
-        })?;
+        let db = WeeDb::<MyTables>::builder(&tempdir, Caches::default())
+            .with_name("test")
+            .with_options(|opts, _| {
+                // Do something with options:
+                opts.create_if_missing(true);
+                opts.create_missing_column_families(true);
+            })
+            .build()?;
 
         let mut migrations = Migrations::with_target_version([0, 1, 0]);
         migrations.register([0, 0, 0], [0, 1, 0], |_| {
@@ -508,7 +555,8 @@ mod tests {
 
         // Prepare db
         let db = WeeDbRaw::builder(&tempdir, caches)
-            .options(|opts, _| {
+            .with_name("test")
+            .with_options(|opts, _| {
                 // Example configuration:
 
                 opts.set_level_compaction_dynamic_level_bytes(true);

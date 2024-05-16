@@ -255,6 +255,15 @@ impl<T> AsRef<WeeDbRaw> for WeeDb<T> {
     }
 }
 
+impl<T> std::ops::Deref for WeeDb<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.inner.tables
+    }
+}
+
 struct WeeDbInner<T> {
     tables: T,
     raw: WeeDbRaw,

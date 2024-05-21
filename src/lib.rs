@@ -199,6 +199,11 @@ impl<T> WeeDb<T> {
         self.inner.raw.rocksdb()
     }
 
+    /// Creates a snapshot bounded to the DB instance.
+    pub fn owned_snapshot(&self) -> OwnedSnapshot {
+        OwnedSnapshot::new(self.rocksdb().clone())
+    }
+
     /// Returns an underlying wrapper.
     pub fn raw(&self) -> &WeeDbRaw {
         &self.inner.raw
@@ -405,6 +410,11 @@ impl WeeDbRaw {
         &self.inner.rocksdb
     }
 
+    /// Creates a snapshot bounded to the DB instance.
+    pub fn owned_snapshot(&self) -> OwnedSnapshot {
+        OwnedSnapshot::new(self.rocksdb().clone())
+    }
+
     /// Returns a DB name if it was set.
     #[inline]
     pub fn db_name(&self) -> Option<&'static str> {
@@ -482,6 +492,37 @@ pub struct Stats {
     pub whole_db_stats: rocksdb::perf::MemoryUsageStats,
     pub block_cache_usage: usize,
     pub block_cache_pined_usage: usize,
+}
+
+/// RocksDB snapshot bounded to a [`rocksdb::DB`] instance.
+pub struct OwnedSnapshot {
+    inner: rocksdb::Snapshot<'static>,
+    _db: Arc<rocksdb::DB>,
+}
+
+impl OwnedSnapshot {
+    pub fn new(db: Arc<rocksdb::DB>) -> Self {
+        use rocksdb::Snapshot;
+
+        unsafe fn extend_lifetime<'a>(r: Snapshot<'a>) -> Snapshot<'static> {
+            std::mem::transmute::<Snapshot<'a>, Snapshot<'static>>(r)
+        }
+
+        // SAFETY: `Snapshot` requires the same lifetime as `rocksdb::DB` but
+        // `tokio::task::spawn` requires 'static. This object ensures
+        // that `rocksdb::DB` object lifetime will exceed the lifetime of the snapshot
+        let inner = unsafe { extend_lifetime(db.as_ref().snapshot()) };
+        Self { inner, _db: db }
+    }
+}
+
+impl std::ops::Deref for OwnedSnapshot {
+    type Target = rocksdb::Snapshot<'static>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 #[cfg(test)]

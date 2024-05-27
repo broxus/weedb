@@ -150,7 +150,7 @@ impl WeeDbInner {
                 let mut labels = labels.clone();
                 labels.push(Label::from_static_parts("cf", name));
 
-                let sanitized_name = sanitize_metric_name(name);
+                let sanitized_name = sanitize_metric_name(property);
                 metrics::gauge!(sanitized_name, labels).set(value as f64);
             }
         }

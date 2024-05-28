@@ -1,6 +1,6 @@
 [package]
 name = "weedb"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "A thin wrapper around RocksDB."
 authors = ["Rexagon", "0xdeafbeef"]

@@ -170,6 +170,16 @@ where
         db_get(self.db.as_ref(), self.cf, key.as_ref(), &self.read_config)
     }
 
+    pub fn multi_get<K: AsRef<[u8]>>(
+        &self,
+        keys: &[K],
+    ) -> Vec<Result<Option<Vec<u8>>, rocksdb::Error>> {
+        self.db.multi_get_cf_opt(
+            keys.iter().map(|k| (&self.cf, k.as_ref())),
+            &self.read_config,
+        )
+    }
+
     /// Inserts a new value into the DB.
     #[inline]
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<(), rocksdb::Error>

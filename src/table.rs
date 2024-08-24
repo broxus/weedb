@@ -170,6 +170,7 @@ where
         db_get(self.db.as_ref(), self.cf, key.as_ref(), &self.read_config)
     }
 
+    /// Gets multiple values from the DB.
     pub fn multi_get<K: AsRef<[u8]>>(
         &self,
         keys: &[K],
@@ -178,6 +179,16 @@ where
             keys.iter().map(|k| (&self.cf, k.as_ref())),
             &self.read_config,
         )
+    }
+
+    /// Gets multiple values from the DB.
+    pub fn batched_multi_get<K: AsRef<[u8]>>(
+        &self,
+        keys: &[K],
+        sorted_input: bool,
+    ) -> Vec<Result<Option<rocksdb::DBPinnableSlice>, rocksdb::Error>> {
+        self.db
+            .batched_multi_get_cf_opt(&self.cf, keys, sorted_input, &self.read_config)
     }
 
     /// Inserts a new value into the DB.

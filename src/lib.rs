@@ -525,6 +525,80 @@ impl std::ops::Deref for OwnedSnapshot {
     }
 }
 
+/// RocksDB raw iterator bounded to a [`rocksdb::DB`] instance.
+pub struct OwnedRawIterator {
+    inner: rocksdb::DBRawIterator<'static>,
+    _db: Arc<rocksdb::DB>,
+}
+
+impl OwnedRawIterator {
+    /// # Safety
+    /// The following must be true:
+    /// - `iter` must be created by the provided `db`.
+    pub unsafe fn new(db: Arc<rocksdb::DB>, iter: rocksdb::DBRawIterator<'_>) -> Self {
+        use rocksdb::DBRawIterator;
+
+        unsafe fn extend_lifetime<'a>(r: DBRawIterator<'a>) -> DBRawIterator<'static> {
+            std::mem::transmute::<DBRawIterator<'a>, DBRawIterator<'static>>(r)
+        }
+
+        // SAFETY: `DBRawIterator` requires the same lifetime as `rocksdb::DB` but
+        // `tokio::task::spawn` requires 'static. This object ensures
+        // that `rocksdb::DB` object lifetime will exceed the lifetime of the iterator
+        let inner = unsafe { extend_lifetime(iter) };
+        Self { inner, _db: db }
+    }
+}
+
+impl std::ops::Deref for OwnedRawIterator {
+    type Target = rocksdb::DBRawIterator<'static>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+/// RocksDB pinnable slice bounded to a [`rocksdb::DB`] instance.
+pub struct OwnedPinnableSlice {
+    inner: rocksdb::DBPinnableSlice<'static>,
+    _db: Arc<rocksdb::DB>,
+}
+
+impl OwnedPinnableSlice {
+    /// # Safety
+    /// The following must be true:
+    /// - `data` must be created by the provided `db`.
+    pub unsafe fn new(db: Arc<rocksdb::DB>, data: rocksdb::DBPinnableSlice<'_>) -> Self {
+        use rocksdb::DBPinnableSlice;
+
+        unsafe fn extend_lifetime<'a>(r: DBPinnableSlice<'a>) -> DBPinnableSlice<'static> {
+            std::mem::transmute::<DBPinnableSlice<'a>, DBPinnableSlice<'static>>(r)
+        }
+
+        // SAFETY: `DBPinnableSlice` requires the same lifetime as `rocksdb::DB` but
+        // `tokio::task::spawn` requires 'static. This object ensures
+        // that `rocksdb::DB` object lifetime will exceed the lifetime of the data
+        let inner = unsafe { extend_lifetime(data) };
+        Self { inner, _db: db }
+    }
+}
+
+impl AsRef<[u8]> for OwnedPinnableSlice {
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
+impl std::ops::Deref for OwnedPinnableSlice {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

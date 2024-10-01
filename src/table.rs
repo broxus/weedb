@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use crate::OwnedPinnableSlice;
+
 /// Column family description.
 ///
 /// # Example
@@ -158,7 +160,7 @@ where
     pub fn get<K: AsRef<[u8]>>(
         &self,
         key: K,
-    ) -> Result<Option<rocksdb::DBPinnableSlice>, rocksdb::Error> {
+    ) -> Result<Option<rocksdb::DBPinnableSlice<'_>>, rocksdb::Error> {
         fn db_get<'a>(
             db: &'a rocksdb::DB,
             cf: CfHandle,
@@ -168,6 +170,19 @@ where
             db.get_pinned_cf_opt(&cf, key, readopts)
         }
         db_get(self.db.as_ref(), self.cf, key.as_ref(), &self.read_config)
+    }
+
+    /// Gets a value from the DB.
+    #[inline]
+    pub fn get_owned<K: AsRef<[u8]>>(
+        &self,
+        key: K,
+    ) -> Result<Option<OwnedPinnableSlice>, rocksdb::Error> {
+        let data = self.get(key)?;
+        Ok(data.map(|data| {
+            // SAFETY: data was created by the `self.db` instance.
+            unsafe { OwnedPinnableSlice::new(self.db.clone(), data) }
+        }))
     }
 
     /// Gets multiple values from the DB.
@@ -186,7 +201,7 @@ where
         &self,
         keys: &[K],
         sorted_input: bool,
-    ) -> Vec<Result<Option<rocksdb::DBPinnableSlice>, rocksdb::Error>> {
+    ) -> Vec<Result<Option<rocksdb::DBPinnableSlice<'_>>, rocksdb::Error>> {
         self.db
             .batched_multi_get_cf_opt(&self.cf, keys, sorted_input, &self.read_config)
     }

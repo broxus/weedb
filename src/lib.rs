@@ -134,6 +134,12 @@ impl<T: Tables> WeeDbBuilder<T> {
         self
     }
 
+    /// Sets flag to open as a read-only DB instance.
+    pub fn read_only(mut self, options: ReadOnly) -> Self {
+        self.inner = self.inner.read_only(options);
+        self
+    }
+
     /// Opens a DB instance.
     #[allow(unused_mut)]
     pub fn build(mut self) -> Result<WeeDb<T>, rocksdb::Error> {
@@ -352,6 +358,7 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
         self
     }
 
+    /// Sets flag to open as a read-only DB instance.
     pub fn read_only(mut self, options: ReadOnly) -> Self {
         self.read_only = Some(options);
         self

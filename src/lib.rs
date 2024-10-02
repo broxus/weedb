@@ -290,6 +290,7 @@ pub struct WeeDbRawBuilder<C> {
     db_name: Option<&'static str>,
     #[cfg(feature = "metrics")]
     metrics_enabled: bool,
+    read_only: Option<ReadOnly>,
 }
 
 impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
@@ -308,6 +309,7 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
             db_name: None,
             #[cfg(feature = "metrics")]
             metrics_enabled: false,
+            read_only: None,
         }
     }
 
@@ -350,6 +352,11 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
         self
     }
 
+    pub fn read_only(mut self, options: ReadOnly) -> Self {
+        self.read_only = Some(options);
+        self
+    }
+
     /// Opens a DB instance.
     #[allow(unused_mut)]
     pub fn build(mut self) -> Result<WeeDbRaw, rocksdb::Error> {
@@ -360,12 +367,19 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
                 .set_statistics_level(rocksdb::statistics::StatsLevel::ExceptDetailedTimers);
         }
 
-        let db = WeeDbRawInner {
-            rocksdb: Arc::new(rocksdb::DB::open_cf_descriptors(
+        let rocksdb = match self.read_only {
+            None => rocksdb::DB::open_cf_descriptors(&self.options, self.path, self.descriptors),
+            Some(options) => rocksdb::DB::open_cf_descriptors_read_only(
                 &self.options,
                 self.path,
                 self.descriptors,
-            )?),
+                options.error_if_log_file_exist,
+            ),
+        }
+        .map(Arc::new)?;
+
+        let db = WeeDbRawInner {
+            rocksdb,
             caches: self.context.as_ref().clone(),
             db_name: self.db_name,
             cf_names: self.cf_names,
@@ -384,6 +398,12 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
             inner: Arc::new(db),
         })
     }
+}
+
+/// Read-only DB options.
+#[derive(Default, Clone, Copy)]
+pub struct ReadOnly {
+    pub error_if_log_file_exist: bool,
 }
 
 /// A thin wrapper around RocksDB.

@@ -30,4 +30,13 @@ impl Caches {
             block_cache: rocksdb::Cache::new_lru_cache(block_cache_capacity),
         }
     }
+
+    /// Sets cache capacity in bytes.
+    ///
+    /// NOTE: if the specified capacity is too low it will be clamped to 64 MB.
+    pub fn set_capacity(&self, capacity: usize) {
+        let block_cache_capacity = std::cmp::max(capacity, Self::MIN_CAPACITY);
+
+        self.block_cache.clone().set_capacity(block_cache_capacity);
+    }
 }

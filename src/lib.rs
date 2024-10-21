@@ -140,6 +140,12 @@ impl<T: Tables> WeeDbBuilder<T> {
         self
     }
 
+    /// Sets flag to open as a secondary DB instance.
+    pub fn secondary(mut self, options: Secondary) -> Self {
+        self.inner = self.inner.secondary(options);
+        self
+    }
+
     /// Opens a DB instance.
     #[allow(unused_mut)]
     pub fn build(mut self) -> Result<WeeDb<T>, rocksdb::Error> {
@@ -296,7 +302,15 @@ pub struct WeeDbRawBuilder<C> {
     db_name: Option<&'static str>,
     #[cfg(feature = "metrics")]
     metrics_enabled: bool,
-    read_only: Option<ReadOnly>,
+    open_mode: OpenMode,
+}
+
+#[derive(Default)]
+enum OpenMode {
+    #[default]
+    Primary,
+    ReadOnly(ReadOnly),
+    Secondary(Secondary),
 }
 
 impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
@@ -315,7 +329,7 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
             db_name: None,
             #[cfg(feature = "metrics")]
             metrics_enabled: false,
-            read_only: None,
+            open_mode: Default::default(),
         }
     }
 
@@ -360,7 +374,13 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
 
     /// Sets flag to open as a read-only DB instance.
     pub fn read_only(mut self, options: ReadOnly) -> Self {
-        self.read_only = Some(options);
+        self.open_mode = OpenMode::ReadOnly(options);
+        self
+    }
+
+    /// Sets flag to open as a secondary DB instance.
+    pub fn secondary(mut self, options: Secondary) -> Self {
+        self.open_mode = OpenMode::Secondary(options);
         self
     }
 
@@ -374,13 +394,21 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
                 .set_statistics_level(rocksdb::statistics::StatsLevel::ExceptDetailedTimers);
         }
 
-        let rocksdb = match self.read_only {
-            None => rocksdb::DB::open_cf_descriptors(&self.options, self.path, self.descriptors),
-            Some(options) => rocksdb::DB::open_cf_descriptors_read_only(
+        let rocksdb = match self.open_mode {
+            OpenMode::Primary => {
+                rocksdb::DB::open_cf_descriptors(&self.options, self.path, self.descriptors)
+            }
+            OpenMode::ReadOnly(options) => rocksdb::DB::open_cf_descriptors_read_only(
                 &self.options,
                 self.path,
                 self.descriptors,
                 options.error_if_log_file_exist,
+            ),
+            OpenMode::Secondary(options) => rocksdb::DB::open_cf_descriptors_as_secondary(
+                &self.options,
+                self.path,
+                options.secondary_path,
+                self.descriptors,
             ),
         }
         .map(Arc::new)?;
@@ -411,6 +439,13 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
 #[derive(Default, Clone, Copy)]
 pub struct ReadOnly {
     pub error_if_log_file_exist: bool,
+}
+
+/// Secondary DB options.
+#[derive(Clone)]
+pub struct Secondary {
+    /// Path to the secondary DB directory.
+    pub secondary_path: PathBuf,
 }
 
 /// A thin wrapper around RocksDB.

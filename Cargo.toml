@@ -5,17 +5,17 @@ edition = "2021"
 description = "A thin wrapper around RocksDB."
 authors = ["Rexagon", "0xdeafbeef"]
 repository = "https://github.com/broxus/weedb"
-rust-version = "1.66.1"
+rust-version = "1.75.0"
 include = ["src/**/*.rs", "benches/**/*.rs", "LICENSE-*", "README.md"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-thiserror = "1.0"
+thiserror = "1"
 tracing = "0.1"
 metrics = { version = "0.23", optional = true }
 
-librocksdb-sys = "0.16.0"
-rocksdb = { version = "0.22.0", features = ["multi-threaded-cf"], default-features = false }
+librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "95d01b183cdb45f80a470cadfc030a545ab66156", version = "0.17.0" }
+rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "95d01b183cdb45f80a470cadfc030a545ab66156", features = ["multi-threaded-cf"], default-features = false }
 
 [dev-dependencies]
 tempfile = "3.10"

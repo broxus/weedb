@@ -178,5 +178,5 @@ pub enum MigrationError {
     #[error("db error: {0}")]
     DbError(#[from] rocksdb::Error),
     #[error("{0}")]
-    Custom(#[source] Box<dyn std::error::Error>),
+    Custom(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 }

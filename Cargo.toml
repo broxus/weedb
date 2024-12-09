@@ -14,8 +14,10 @@ thiserror = "1"
 tracing = "0.1"
 metrics = { version = "0.23", optional = true }
 
-librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "95d01b183cdb45f80a470cadfc030a545ab66156", version = "0.17.0" }
-rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "95d01b183cdb45f80a470cadfc030a545ab66156", features = ["multi-threaded-cf"], default-features = false }
+librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "b2dab4a0915eed72741657f783118d9220d4f070", version = "0.17.0" }
+rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "b2dab4a0915eed72741657f783118d9220d4f070", features = [
+    "multi-threaded-cf",
+], default-features = false }
 
 [dev-dependencies]
 tempfile = "3.10"
@@ -25,4 +27,5 @@ default = ["zstd", "lz4", "jemalloc", "metrics"]
 zstd = ["rocksdb/zstd"]
 lz4 = ["rocksdb/lz4"]
 jemalloc = ["rocksdb/jemalloc"]
+lto = ["rocksdb/lto"]
 metrics = ["dep:metrics"]

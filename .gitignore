@@ -3,6 +3,7 @@ Cargo.lock
 
 .idea/
 .code/
+.vscode/
 
 # python stuff
 __pycache__/

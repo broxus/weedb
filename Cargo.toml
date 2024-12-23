@@ -14,8 +14,8 @@ thiserror = "1"
 tracing = "0.1"
 metrics = { version = "0.23", optional = true }
 
-librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "b2dab4a0915eed72741657f783118d9220d4f070", version = "0.17.0" }
-rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "b2dab4a0915eed72741657f783118d9220d4f070", features = [
+librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "5275b3c760e772646fc23f219ac83d80717c14aa", version = "0.17.0" }
+rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "5275b3c760e772646fc23f219ac83d80717c14aa", features = [
     "multi-threaded-cf",
 ], default-features = false }
 

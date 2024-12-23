@@ -2,9 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
-
-pub use rocksdb;
+use std::time::{Duration, Instant};
 
 pub use self::caches::Caches;
 pub use self::migrations::{
@@ -13,6 +11,7 @@ pub use self::migrations::{
 pub use self::table::{
     BoundedCfHandle, ColumnFamily, ColumnFamilyOptions, Table, UnboundedCfHandle,
 };
+pub use rocksdb;
 
 mod caches;
 #[cfg(feature = "metrics")]
@@ -143,6 +142,12 @@ impl<T: Tables> WeeDbBuilder<T> {
     /// Sets flag to open as a secondary DB instance.
     pub fn secondary(mut self, options: Secondary) -> Self {
         self.inner = self.inner.secondary(options);
+        self
+    }
+
+    /// Enables ttl compaction filter
+    pub fn with_ttl_support(mut self, default_cf_ttl: Duration) -> Self {
+        self.inner = self.inner.with_ttl_support(default_cf_ttl);
         self
     }
 
@@ -311,6 +316,7 @@ enum OpenMode {
     Primary,
     ReadOnly(ReadOnly),
     Secondary(Secondary),
+    WithTtlSupport(Duration),
 }
 
 impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
@@ -355,9 +361,17 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
     {
         let mut opts = Default::default();
         T::options(&mut opts, &mut self.context);
+
+        let ttl = T::ttl();
+
         self.descriptors
-            .push(rocksdb::ColumnFamilyDescriptor::new(T::NAME, opts));
+            .push(rocksdb::ColumnFamilyDescriptor::new_with_ttl(
+                T::NAME,
+                opts,
+                ttl,
+            ));
         self.cf_names.push(T::NAME);
+
         self
     }
 
@@ -381,6 +395,11 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
     /// Sets flag to open as a secondary DB instance.
     pub fn secondary(mut self, options: Secondary) -> Self {
         self.open_mode = OpenMode::Secondary(options);
+        self
+    }
+
+    pub fn with_ttl_support(mut self, default_cf_ttl: Duration) -> Self {
+        self.open_mode = OpenMode::WithTtlSupport(default_cf_ttl);
         self
     }
 
@@ -409,6 +428,12 @@ impl<C: AsRef<Caches>> WeeDbRawBuilder<C> {
                 self.path,
                 options.secondary_path,
                 self.descriptors,
+            ),
+            OpenMode::WithTtlSupport(default_cf_ttl) => rocksdb::DB::open_cf_descriptors_with_ttl(
+                &self.options,
+                self.path,
+                self.descriptors,
+                default_cf_ttl,
             ),
         }
         .map(Arc::new)?;

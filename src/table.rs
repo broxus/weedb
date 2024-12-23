@@ -1,7 +1,7 @@
+use crate::OwnedPinnableSlice;
+use rocksdb::ColumnFamilyTtl;
 use std::marker::PhantomData;
 use std::sync::Arc;
-
-use crate::OwnedPinnableSlice;
 
 /// Column family description.
 ///
@@ -69,6 +69,10 @@ pub trait ColumnFamilyOptions<C>: ColumnFamily {
     fn options(opts: &mut rocksdb::Options, ctx: &mut C) {
         let _unused = opts;
         let _unused = ctx;
+    }
+
+    fn ttl() -> ColumnFamilyTtl {
+        ColumnFamilyTtl::Disabled
     }
 }
 

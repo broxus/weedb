@@ -93,6 +93,15 @@ const ROCKSDB_CF_PROPERTIES: &[(&str, Unit)] = &[
     ("rocksdb.num-files-at-level4", Unit::Count),
     ("rocksdb.num-files-at-level5", Unit::Count),
     ("rocksdb.num-files-at-level6", Unit::Count),
+    // blobdb stuff
+    ("rocksdb.num-blob-files", Unit::Count),
+    ("rocksdb.blob-stats", Unit::Count),
+    ("rocksdb.total-blob-file-size", Unit::Bytes),
+    ("rocksdb.live-blob-file-size", Unit::Bytes),
+    ("rocksdb.live-blob-file-garbage-size", Unit::Bytes),
+    ("rocksdb.blob-cache-capacity", Unit::Bytes),
+    ("rocksdb.blob-cache-usage", Unit::Bytes),
+    ("rocksdb.blob-cache-pinned-usage", Unit::Bytes),
 ];
 
 impl WeeDbRawInner {

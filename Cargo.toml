@@ -1,6 +1,6 @@
 [package]
 name = "weedb"
-version = "0.3.8"
+version = "0.4.0"
 edition = "2021"
 description = "A thin wrapper around RocksDB."
 authors = ["Rexagon", "0xdeafbeef"]
@@ -10,12 +10,12 @@ include = ["src/**/*.rs", "benches/**/*.rs", "LICENSE-*", "README.md"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-thiserror = "1"
+thiserror = "2.0.11"
 tracing = "0.1"
 metrics = { version = "0.23", optional = true }
 
-librocksdb-sys = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "5275b3c760e772646fc23f219ac83d80717c14aa", version = "0.17.0" }
-rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb.git", rev = "5275b3c760e772646fc23f219ac83d80717c14aa", features = [
+librocksdb-sys = { version = "0.17.0" }
+rocksdb = { version = "0.23.0", features = [
     "multi-threaded-cf",
 ], default-features = false }
 

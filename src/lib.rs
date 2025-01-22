@@ -646,6 +646,13 @@ impl std::ops::Deref for OwnedRawIterator {
     }
 }
 
+impl std::ops::DerefMut for OwnedRawIterator {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 /// RocksDB pinnable slice bounded to a [`rocksdb::DB`] instance.
 pub struct OwnedPinnableSlice {
     inner: rocksdb::DBPinnableSlice<'static>,

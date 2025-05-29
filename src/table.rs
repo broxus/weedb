@@ -216,6 +216,12 @@ where
             .key_may_exist_cf_opt(&self.cf, key, &self.read_config)
     }
 
+    /// Get value if the key exists.
+    pub fn key_may_exist_value<K: AsRef<[u8]>>(&self, key: K) -> (bool, Option<rocksdb::CSlice>) {
+        self.db
+            .key_may_exist_cf_opt_value(&self.cf, key, &self.read_config)
+    }
+
     /// Inserts a new value into the DB.
     #[inline]
     pub fn insert<K, V>(&self, key: K, value: V) -> Result<(), rocksdb::Error>

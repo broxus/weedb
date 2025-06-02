@@ -584,7 +584,7 @@ pub struct Stats {
 /// RocksDB snapshot bounded to a [`rocksdb::DB`] instance.
 pub struct OwnedSnapshot {
     inner: rocksdb::Snapshot<'static>,
-    _db: Arc<rocksdb::DB>,
+    db: Arc<rocksdb::DB>,
 }
 
 impl OwnedSnapshot {
@@ -599,7 +599,13 @@ impl OwnedSnapshot {
         // `tokio::task::spawn` requires 'static. This object ensures
         // that `rocksdb::DB` object lifetime will exceed the lifetime of the snapshot
         let inner = unsafe { extend_lifetime(db.as_ref().snapshot()) };
-        Self { inner, _db: db }
+        Self { inner, db }
+    }
+
+    /// Returns the underlying DB instance.
+    #[inline]
+    pub fn db(&self) -> &Arc<rocksdb::DB> {
+        &self.db
     }
 }
 
@@ -615,7 +621,7 @@ impl std::ops::Deref for OwnedSnapshot {
 /// RocksDB raw iterator bounded to a [`rocksdb::DB`] instance.
 pub struct OwnedRawIterator {
     inner: rocksdb::DBRawIterator<'static>,
-    _db: Arc<rocksdb::DB>,
+    db: Arc<rocksdb::DB>,
 }
 
 impl OwnedRawIterator {
@@ -633,7 +639,13 @@ impl OwnedRawIterator {
         // `tokio::task::spawn` requires 'static. This object ensures
         // that `rocksdb::DB` object lifetime will exceed the lifetime of the iterator
         let inner = unsafe { extend_lifetime(iter) };
-        Self { inner, _db: db }
+        Self { inner, db }
+    }
+
+    /// Returns the underlying DB instance.
+    #[inline]
+    pub fn db(&self) -> &Arc<rocksdb::DB> {
+        &self.db
     }
 }
 
@@ -656,7 +668,7 @@ impl std::ops::DerefMut for OwnedRawIterator {
 /// RocksDB pinnable slice bounded to a [`rocksdb::DB`] instance.
 pub struct OwnedPinnableSlice {
     inner: rocksdb::DBPinnableSlice<'static>,
-    _db: Arc<rocksdb::DB>,
+    db: Arc<rocksdb::DB>,
 }
 
 impl OwnedPinnableSlice {
@@ -674,7 +686,13 @@ impl OwnedPinnableSlice {
         // `tokio::task::spawn` requires 'static. This object ensures
         // that `rocksdb::DB` object lifetime will exceed the lifetime of the data
         let inner = unsafe { extend_lifetime(data) };
-        Self { inner, _db: db }
+        Self { inner, db }
+    }
+
+    /// Returns the underlying DB instance.
+    #[inline]
+    pub fn db(&self) -> &Arc<rocksdb::DB> {
+        &self.db
     }
 }
 

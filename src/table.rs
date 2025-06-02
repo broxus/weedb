@@ -123,7 +123,7 @@ where
     pub fn get_unbounded_cf(&self) -> UnboundedCfHandle {
         UnboundedCfHandle {
             inner: self.cf.0,
-            _db: self.db.clone(),
+            db: self.db.clone(),
         }
     }
 
@@ -320,10 +320,16 @@ unsafe impl Send for BoundedCfHandle<'_> {}
 #[derive(Clone)]
 pub struct UnboundedCfHandle {
     inner: *mut librocksdb_sys::rocksdb_column_family_handle_t,
-    _db: Arc<rocksdb::DB>,
+    db: Arc<rocksdb::DB>,
 }
 
 impl UnboundedCfHandle {
+    /// Returns the underlying DB instance.
+    #[inline]
+    pub fn db(&self) -> &Arc<rocksdb::DB> {
+        &self.db
+    }
+
     #[inline]
     pub fn bound(&self) -> BoundedCfHandle<'_> {
         BoundedCfHandle {

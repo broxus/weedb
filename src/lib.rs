@@ -493,6 +493,11 @@ impl WeeDbRaw {
         }
     }
 
+    /// Returns `true` if the two [`WeeDbRaw`]s point to the same allocation.
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Arc::ptr_eq(&this.inner, &other.inner)
+    }
+
     /// Creates a table instance.
     pub fn instantiate_table<T: ColumnFamily>(&self) -> Table<T> {
         Table::new(self.inner.rocksdb.clone())
@@ -502,6 +507,12 @@ impl WeeDbRaw {
     #[inline]
     pub fn rocksdb(&self) -> &Arc<rocksdb::DB> {
         &self.inner.rocksdb
+    }
+
+    /// Return `true` if this [`WeeDbRaw`] object owns the specified DB instance.
+    #[inline]
+    pub fn is_same_instance(&self, db: &Arc<rocksdb::DB>) -> bool {
+        Arc::ptr_eq(&self.inner.rocksdb, db)
     }
 
     /// Creates a snapshot bounded to the DB instance.
@@ -551,6 +562,14 @@ impl AsRef<WeeDbRaw> for WeeDbRaw {
     }
 }
 
+impl Eq for WeeDbRaw {}
+impl PartialEq for WeeDbRaw {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Self::ptr_eq(self, other)
+    }
+}
+
 /// Weak reference to the [`WeeDbRaw`]
 #[derive(Clone)]
 #[repr(transparent)]
@@ -559,10 +578,23 @@ pub struct WeakWeeDbRaw {
 }
 
 impl WeakWeeDbRaw {
+    /// Returns `true` if the two [`WeakWeeDbRaw`]s point to the same allocation.
+    pub fn ptr_eq(this: &Self, other: &Self) -> bool {
+        Weak::ptr_eq(&this.inner, &other.inner)
+    }
+
     /// Attempts to upgrade the internal `Weak` pointer to an [`WeeDbRaw`],
     /// delaying dropping of the inner value if successful.
     pub fn upgrade(&self) -> Option<WeeDbRaw> {
         self.inner.upgrade().map(|inner| WeeDbRaw { inner })
+    }
+}
+
+impl Eq for WeakWeeDbRaw {}
+impl PartialEq for WeakWeeDbRaw {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Self::ptr_eq(self, other)
     }
 }
 

@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 pub use self::caches::Caches;
@@ -486,6 +486,13 @@ impl WeeDbRaw {
         WeeDbRawBuilder::new(path, context)
     }
 
+    /// Creates a new [`WeakWeeDbRaw`] reference to this DB.
+    pub fn downgrade(this: &Self) -> WeakWeeDbRaw {
+        WeakWeeDbRaw {
+            inner: Arc::downgrade(&this.inner),
+        }
+    }
+
     /// Creates a table instance.
     pub fn instantiate_table<T: ColumnFamily>(&self) -> Table<T> {
         Table::new(self.inner.rocksdb.clone())
@@ -541,6 +548,21 @@ impl AsRef<WeeDbRaw> for WeeDbRaw {
     #[inline]
     fn as_ref(&self) -> &WeeDbRaw {
         self
+    }
+}
+
+/// Weak reference to the [`WeeDbRaw`]
+#[derive(Clone)]
+#[repr(transparent)]
+pub struct WeakWeeDbRaw {
+    inner: Weak<WeeDbRawInner>,
+}
+
+impl WeakWeeDbRaw {
+    /// Attempts to upgrade the internal `Weak` pointer to an [`WeeDbRaw`],
+    /// delaying dropping of the inner value if successful.
+    pub fn upgrade(&self) -> Option<WeeDbRaw> {
+        self.inner.upgrade().map(|inner| WeeDbRaw { inner })
     }
 }
 

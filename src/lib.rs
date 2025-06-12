@@ -526,6 +526,11 @@ impl WeeDbRaw {
         self.inner.db_name
     }
 
+    /// Returns a list of all opened column families.
+    pub fn cf_names(&self) -> &[&'static str] {
+        &self.inner.cf_names
+    }
+
     /// Returns an underlying caches group.
     #[inline]
     pub fn caches(&self) -> &Caches {
@@ -543,6 +548,35 @@ impl WeeDbRaw {
     #[cfg(feature = "metrics")]
     pub fn refresh_metrics(&self) {
         self.inner.refresh_metrics();
+    }
+
+    /// Performs a manual compaction for all opened column families.
+    pub fn compact(&self) {
+        let mut compaction_options = rocksdb::CompactOptions::default();
+        compaction_options.set_exclusive_manual_compaction(true);
+        compaction_options
+            .set_bottommost_level_compaction(rocksdb::BottommostLevelCompaction::ForceOptimized);
+
+        for &cf_name in &self.inner.cf_names {
+            let Some(cf) = self.rocksdb().cf_handle(cf_name) else {
+                tracing::warn!(cf = cf_name, "unknown column family");
+                continue;
+            };
+
+            tracing::info!(cf = cf_name, "compaction started");
+
+            let instant = Instant::now();
+            let bound = Option::<[u8; 0]>::None;
+
+            self.rocksdb()
+                .compact_range_cf_opt(&cf, bound, bound, &compaction_options);
+
+            tracing::info!(
+                cf = cf_name,
+                elapsed_sec = %instant.elapsed().as_secs_f64(),
+                "compaction finished"
+            );
+        }
     }
 }
 

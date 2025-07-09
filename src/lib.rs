@@ -680,7 +680,7 @@ impl OwnedSnapshot {
         use rocksdb::Snapshot;
 
         unsafe fn extend_lifetime<'a>(r: Snapshot<'a>) -> Snapshot<'static> {
-            std::mem::transmute::<Snapshot<'a>, Snapshot<'static>>(r)
+            unsafe { std::mem::transmute::<Snapshot<'a>, Snapshot<'static>>(r) }
         }
 
         // SAFETY: `Snapshot` requires the same lifetime as `rocksdb::DB` but
@@ -720,7 +720,7 @@ impl OwnedRawIterator {
         use rocksdb::DBRawIterator;
 
         unsafe fn extend_lifetime<'a>(r: DBRawIterator<'a>) -> DBRawIterator<'static> {
-            std::mem::transmute::<DBRawIterator<'a>, DBRawIterator<'static>>(r)
+            unsafe { std::mem::transmute::<DBRawIterator<'a>, DBRawIterator<'static>>(r) }
         }
 
         // SAFETY: `DBRawIterator` requires the same lifetime as `rocksdb::DB` but
@@ -767,7 +767,7 @@ impl OwnedPinnableSlice {
         use rocksdb::DBPinnableSlice;
 
         unsafe fn extend_lifetime<'a>(r: DBPinnableSlice<'a>) -> DBPinnableSlice<'static> {
-            std::mem::transmute::<DBPinnableSlice<'a>, DBPinnableSlice<'static>>(r)
+            unsafe { std::mem::transmute::<DBPinnableSlice<'a>, DBPinnableSlice<'static>>(r) }
         }
 
         // SAFETY: `DBPinnableSlice` requires the same lifetime as `rocksdb::DB` but

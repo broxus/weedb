@@ -190,7 +190,7 @@ fn format_rocksdb_histogram_for_prometheus(name: &str, data: HistogramData, labe
     let base_sanitized_name = sanitize_metric_name(name);
 
     for (value, suffix) in metrics.iter().zip(HISTOGRAM_POSTFIXES.iter()) {
-        let metric_name = format!("{}_{}", base_sanitized_name, suffix);
+        let metric_name = format!("{base_sanitized_name}_{suffix}");
         metrics::gauge!(metric_name, labels.iter()).set(*value);
     }
 }

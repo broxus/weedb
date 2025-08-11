@@ -1,6 +1,6 @@
 [package]
 name = "weedb"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "A thin wrapper around RocksDB."
 authors = ["Rexagon", "0xdeafbeef"]
@@ -14,8 +14,8 @@ thiserror = "2.0.11"
 tracing = "0.1"
 metrics = { version = "0.24", optional = true }
 
-librocksdb-sys = { version = "0.17.0" }
-rocksdb = { version = "0.23.0", features = ["multi-threaded-cf"], default-features = false }
+librocksdb-sys = { version = "0.17.3" }
+rocksdb = { version = "0.24.0", features = ["multi-threaded-cf"], default-features = false }
 
 [dev-dependencies]
 tempfile = "3.10"
